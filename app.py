@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 
 # --- 網頁設定 ---
-st.set_page_config(page_title="雙博士投資組合分析儀 V2.7.1", layout="wide")
+st.set_page_config(page_title="雙博士投資組合分析儀 V2.8", layout="wide")
 
 # --- 建立三分頁 (Tabs) ---
 tab1, tab3, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "⚔️ ETF 擂台 (Compare)", "ℹ️ 系統資訊 (About)"])
@@ -17,14 +17,14 @@ tab1, tab3, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "⚔️ ETF 擂台 (
 with tab2:
     st.header("ℹ️ 關於本系統")
     st.markdown("""
-    **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** * **V2.7.1 更新：** 修復 ETF 擂台的 try-except 縮排錯誤 (Indentation Bug)。
+    **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** * **V2.8 更新：** 績效區新增比較基準說明，並加入「夏普、卡瑪、下檔捕獲率」的白話文摺疊百科。
+    * **V2.7.1 更新：** 修復 ETF 擂台的 try-except 縮排錯誤。
     * **V2.7 更新：** 全新上線「ETF 擂台」，支援兩檔 ETF 深度對決與雷達圖分析。
     * **V2.6 更新：** 圖表區加入「白話文翻譯」輔助說明，並優化數值顯示格式。
-    * **V2.5 更新：** 實裝 Plotly 動態甜甜圈圖 (Donut Chart)。
     """)
 
 # ==========================================
-#  分頁 2：ETF 擂台 (Compare) - V2.7.1 修正版
+#  分頁 2：ETF 擂台 (Compare)
 # ==========================================
 with tab3:
     st.title("⚔️ ETF 終極擂台")
@@ -38,7 +38,6 @@ with tab3:
         
     c_start_date = st.date_input("比較起始日期", datetime(2020, 1, 1), key="compare_start")
     
-    # 建立核心計算函數 (共用邏輯)
     def calc_single_asset_metrics(daily_returns):
         if len(daily_returns) == 0:
             return 0, 0, 0, 0, 0
@@ -52,7 +51,6 @@ with tab3:
         sharpe = (cagr - 0.03) / volatility if volatility != 0 else 0
         return total_return, cagr, volatility, mdd, sharpe
     
-    # 數字格式化小工具
     def format_currency(num):
         if num is None or pd.isna(num): return "N/A"
         if num >= 1e9: return f"{num/1e9:.2f} B (十億)"
@@ -63,14 +61,13 @@ with tab3:
         if etf_a and etf_b:
             try:
                 with st.spinner('正在同步爬取歷史價格與基本面資料...'):
-                    # 1. 抓取歷史價格
                     df_dl = yf.download([etf_a, etf_b], start=c_start_date, auto_adjust=True, progress=False)
                     if 'Close' in df_dl.columns:
                         df_compare = df_dl['Close']
                     else:
                         df_compare = df_dl
 
-                    df_compare = df_compare.dropna(how='any') # 只取共同有交易的日子
+                    df_compare = df_compare.dropna(how='any') 
                     
                     if df_compare.empty:
                         st.error("❌ 無法取得共同的歷史交易資料，請檢查代號是否正確。")
@@ -82,16 +79,13 @@ with tab3:
                     metrics_a = calc_single_asset_metrics(ret_a)
                     metrics_b = calc_single_asset_metrics(ret_b)
                     
-                    # 2. 抓取基本面資料 (yfinance .info)
                     info_a = yf.Ticker(etf_a).info
                     info_b = yf.Ticker(etf_b).info
                     
-                # --- 顯示對決結果 --- (✅ 這裡的縮排已經完美修正，收進 try 裡面)
                 st.divider()
                 st.subheader("📊 基本面資料比拚")
                 st.caption("⚠️ 註：Yahoo Finance 對非美股 (如台股) 的基本面資料覆蓋率較低，若顯示 N/A 代表官方 API 查無資料。")
                 
-                # 使用表格呈現
                 comp_data = {
                     "評估項目": ["總資產規模 (AUM)", "殖利率 (Yield)", "52週最高價", "52週最低價"],
                     f"🔵 {etf_a}": [
@@ -109,7 +103,6 @@ with tab3:
                 }
                 st.table(pd.DataFrame(comp_data).set_index("評估項目"))
                 
-                # --- 雷達圖對決 ---
                 st.subheader("🕸️ 戰力雷達圖 (Radar Chart)")
                 st.info("💡 白話解釋：涵蓋面積越大的標的，代表其綜合戰鬥力（報酬高、波動低、抗跌能力強）越優秀！")
                 
@@ -131,7 +124,7 @@ with tab3:
                 st.error(f"比對過程中發生錯誤：{str(e)}")
 
 # ==========================================
-#  分頁 1：量化分析主程式 (Analyzer) -> 保留 V2.6 邏輯
+#  分頁 1：量化分析主程式 (Analyzer)
 # ==========================================
 with tab1:
     st.title("📊 Quant Portfolio Analyzer")
@@ -253,8 +246,26 @@ with tab1:
             p_metrics = calculate_metrics(portfolio_ret, benchmark_ret)
             b_metrics = calculate_metrics(benchmark_ret, benchmark_ret) 
 
-            # --- 顯示結果 UI ---
+            # --- 【V2.8 升級】顯示結果 UI 與白話文百科 ---
             st.subheader("🏆 績效與防禦力總覽")
+            
+            # 清楚標示「和誰比？」
+            st.markdown(f"**🆚 比較基準：** 以下數字下方的紅綠色差異值（Delta），皆為與 **{benchmark_ticker} (大盤)** 比較的結果。")
+            
+            # 使用手風琴面板收納說明，保持版面清爽
+            with st.expander("💡 點我查看：夏普、卡瑪、下檔捕獲率是什麼意思？"):
+                st.markdown("""
+                * **📊 夏普比率 (Sharpe Ratio) - 投資的「CP 值」：**
+                  衡量你「每承受 1% 的波動風險，能換來多少超額報酬」。數字越高越好。通常 > 1 代表非常優秀。
+                * **🛡️ 卡瑪比率 (Calmar Ratio) - 投資的「抗跌效能」：**
+                  衡量你「每承受 1% 的極限虧損 (MDD)，能換來多少年化報酬」。數字越高越好。> 1 視為神級抗跌策略。
+                * **🧲 下檔捕獲率 (Downside Capture) - 投資的「防禦裝甲」：**
+                  衡量「大盤下跌時，你跟著跌了多少」。數字越低越好。
+                  *(例如：80% 代表大盤跌 10 元時，你只跌 8 元；如果出現負數，代表大盤跌的時候你居然還在賺錢！)*
+                """)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+
             c1, c2, c3 = st.columns(3)
             c1.metric("總報酬率", f"{p_metrics[0]:.2%}", f"{(p_metrics[0]-b_metrics[0])*100:.2f} p.p.")
             c2.metric("年化報酬 (CAGR)", f"{p_metrics[1]:.2%}", f"{(p_metrics[1]-b_metrics[1])*100:.2f} p.p.")
