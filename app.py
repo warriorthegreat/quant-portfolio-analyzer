@@ -187,7 +187,7 @@ with tab1:
     # --- 【V3.0 升級】側邊欄開發者署名區塊 ---
     st.sidebar.markdown("<br><br>", unsafe_allow_html=True) # 留一些空白把簽名推到下面
     st.sidebar.info("""
-    👨‍💻 **Developed by:** [你的名字/暱稱]  
+    👨‍💻 **Developed by:** [Zhang Alvin]  
     🤖 **Co-Pilot:** Gemini AI
     """)
 
