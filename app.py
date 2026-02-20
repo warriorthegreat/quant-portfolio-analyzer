@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 
 # --- 網頁設定 ---
-st.set_page_config(page_title="雙博士投資組合分析儀 V2.8", layout="wide")
+st.set_page_config(page_title="雙博士投資組合分析儀 V3.0", layout="wide")
 
 # --- 建立三分頁 (Tabs) ---
 tab1, tab3, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "⚔️ ETF 擂台 (Compare)", "ℹ️ 系統資訊 (About)"])
@@ -15,12 +15,23 @@ tab1, tab3, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "⚔️ ETF 擂台 (
 #  分頁 3：系統資訊 (About)
 # ==========================================
 with tab2:
-    st.header("ℹ️ 關於本系統")
+    st.header("ℹ️ 關於本系統 (About)")
     st.markdown("""
-    **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** * **V2.8 更新：** 績效區新增比較基準說明，並加入「夏普、卡瑪、下檔捕獲率」的白話文摺疊百科。
-    * **V2.7.1 更新：** 修復 ETF 擂台的 try-except 縮排錯誤。
+    **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** 是一個專為量化投資人打造的專業級回測與風險評估工具。
+    
+    ### 👨‍💻 開發團隊 (Credits)
+    * **系統架構與主開發者：** [你的名字/暱稱] (量化投資研究員)
+    * **AI 協同開發顧問：** Google Gemini (雙博士理財與資工顧問)
+    * **核心運算引擎：** Python, Streamlit, Pandas, yfinance, Plotly
+    
+    ---
+    ### 🔄 版本更新紀錄 (Changelog)
+    * **V3.0 (Release)：** 正式發行版上線，加入全域開發者署名。
+    * **V2.9 更新：** 新增「比較基準 (Benchmark)」智慧下拉選單。
+    * **V2.8 更新：** 績效區新增比較對象動態標示，並加入「指標白話文百科」。
     * **V2.7 更新：** 全新上線「ETF 擂台」，支援兩檔 ETF 深度對決與雷達圖分析。
-    * **V2.6 更新：** 圖表區加入「白話文翻譯」輔助說明，並優化數值顯示格式。
+    * **V2.6 更新：** 圖表區加入「白話文翻譯」輔助說明。
+    * **V2.5 更新：** 實裝 Plotly 動態甜甜圈圖 (Donut Chart)。
     """)
 
 # ==========================================
@@ -153,7 +164,32 @@ with tab1:
     st.sidebar.divider() 
     start_date = st.sidebar.date_input("開始日期", datetime(2021, 1, 1))
     end_date = st.sidebar.date_input("結束日期", datetime.now())
-    raw_benchmark = st.sidebar.text_input("比較基準 (Benchmark)", "0050.TW")
+    
+    st.sidebar.markdown("### 🎯 比較基準設定")
+    BENCHMARKS = {
+        "🇹🇼 台灣 50 大盤 (0050.TW)": "0050.TW",
+        "🇺🇸 S&P 500 美股大盤 (SPY)": "SPY",
+        "🇺🇸 S&P 500 美股大盤 (VOO)": "VOO",
+        "🇺🇸 Nasdaq 科技股 (QQQ)": "QQQ",
+        "🌍 全球股票大盤 (VT)": "VT",
+        "🇺🇸 美國整體股市 (VTI)": "VTI",
+        "🏦 美國整體債券 (BND)": "BND",
+        "✏️ 自訂輸入 (Custom)": "CUSTOM"
+    }
+    
+    selected_bench_name = st.sidebar.selectbox("選擇你要挑戰的大盤：", list(BENCHMARKS.keys()))
+    
+    if BENCHMARKS[selected_bench_name] == "CUSTOM":
+        raw_benchmark = st.sidebar.text_input("請輸入自訂代號 (例如 AAPL)", "0050.TW").strip().upper()
+    else:
+        raw_benchmark = BENCHMARKS[selected_bench_name]
+
+    # --- 【V3.0 升級】側邊欄開發者署名區塊 ---
+    st.sidebar.markdown("<br><br>", unsafe_allow_html=True) # 留一些空白把簽名推到下面
+    st.sidebar.info("""
+    👨‍💻 **Developed by:** [你的名字/暱稱]  
+    🤖 **Co-Pilot:** Gemini AI
+    """)
 
     @st.cache_data
     def get_data(tickers, start, end):
@@ -246,13 +282,10 @@ with tab1:
             p_metrics = calculate_metrics(portfolio_ret, benchmark_ret)
             b_metrics = calculate_metrics(benchmark_ret, benchmark_ret) 
 
-            # --- 【V2.8 升級】顯示結果 UI 與白話文百科 ---
             st.subheader("🏆 績效與防禦力總覽")
             
-            # 清楚標示「和誰比？」
-            st.markdown(f"**🆚 比較基準：** 以下數字下方的紅綠色差異值（Delta），皆為與 **{benchmark_ticker} (大盤)** 比較的結果。")
+            st.markdown(f"**🆚 比較基準：** 以下數字下方的紅綠色差異值，皆為與 **{selected_bench_name}** 比較的結果。")
             
-            # 使用手風琴面板收納說明，保持版面清爽
             with st.expander("💡 點我查看：夏普、卡瑪、下檔捕獲率是什麼意思？"):
                 st.markdown("""
                 * **📊 夏普比率 (Sharpe Ratio) - 投資的「CP 值」：**
@@ -278,7 +311,6 @@ with tab1:
             c7.metric("🛡️ 下檔捕獲率", f"{p_metrics[6]:.2%}", f"{(p_metrics[6]-b_metrics[6])*100:.2f} p.p.", delta_color="inverse")
             st.divider()
 
-            # --- 甜甜圈圖 ---
             st.subheader("🍩 資產配置權重 (Asset Allocation)")
             fig_pie = go.Figure(data=[go.Pie(labels=clean_tickers, values=clean_weights, hole=0.4, textinfo='label+percent', insidetextorientation='radial')])
             fig_pie.update_layout(margin=dict(t=20, b=20, l=0, r=0), height=350)
@@ -287,7 +319,6 @@ with tab1:
                 st.plotly_chart(fig_pie, use_container_width=True)
             st.divider()
 
-            # --- 走勢圖與水下圖 ---
             st.subheader("📈 財富累積曲線 (Wealth Index)")
             st.info("**💡 白話解釋：** 假設你在起點投入了 **1 元**，這條線代表你總資產的成長變化。大盤的虛線讓你一眼看出有沒有跑贏大盤。")
             fig1 = go.Figure()
