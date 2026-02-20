@@ -6,41 +6,19 @@ import plotly.graph_objects as go
 from datetime import datetime
 
 # --- 網頁設定 ---
-st.set_page_config(page_title="雙博士投資組合分析儀 V2.2", layout="wide")
+st.set_page_config(page_title="雙博士投資組合分析儀 V2.3", layout="wide")
 
 # --- 建立雙分頁 (Tabs) ---
 tab1, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "ℹ️ 系統資訊 (About)"])
 
 # ==========================================
-#  分頁 2：系統資訊 (About) - 先定義這塊，保持程式碼乾淨
+#  分頁 2：系統資訊 (About)
 # ==========================================
 with tab2:
     st.header("ℹ️ 關於本系統")
     st.markdown("""
-    **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** 是一個專為量化投資人打造的回測與風險評估工具。
-    
-    * **主要開發者：** [你的名字 / 大齡工程師]
-    * **協同開發：** Gemini (雙博士 AI 理財顧問)
-    * **核心技術：** Python, Streamlit, Pandas, Yahoo Finance API
-    
-    ---
-    ### 🔄 版本更新紀錄 (Changelog)
-    
-    * **V2.2 (Current)**
-        * 導入 `st.tabs` 雙分頁架構，分離運算主畫面與系統資訊。
-    * **V2.1**
-        * 側邊欄 UI 大升級：導入動態增減資產欄位。
-        * 新增防呆機制：嚴格檢查權重總和必須為 100%。
-    * **V2.0**
-        * 實裝進階防禦力指標：`卡瑪比率 (Calmar Ratio)`。
-        * 實裝機構級評估指標：`下檔捕獲率 (Downside Capture Ratio)`。
-    * **V1.0**
-        * 核心量化引擎上線：支援 CAGR、MDD、夏普比率與財富水下圖。
-        
-    ---
-    ### 💡 指標說明
-    * **卡瑪比率 (Calmar Ratio)：** 衡量每承擔 1% 的極限虧損，能換取多少年化報酬。大於 1 視為優秀。
-    * **下檔捕獲率：** 大盤下跌時，投資組合跟著跌的比例。小於 100% 代表比大盤抗跌。
+    **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** * **V2.3 更新：** 加入強大的資料空值與 API 防呆攔截機制，防止 `out-of-bounds` 錯誤。
+    * **V2.2 更新：** 導入雙分頁架構。
     """)
 
 # ==========================================
@@ -87,10 +65,14 @@ with tab1:
         return df
 
     def calculate_metrics(daily_returns, benchmark_returns=None):
+        # 【防線 1】如果傳進來的資料是空的，直接回傳 0，避免 iloc[-1] 崩潰
+        if len(daily_returns) == 0:
+            return 0, 0, 0, 0, 0, 0, 1.0, pd.Series(dtype=float), pd.Series(dtype=float)
+
         cumulative = (1 + daily_returns).cumprod()
         total_return = cumulative.iloc[-1] - 1
         n_years = len(daily_returns) / 252
-        cagr = (1 + total_return) ** (1 / n_years) - 1
+        cagr = (1 + total_return) ** (1 / n_years) - 1 if n_years > 0 else 0
         
         volatility = daily_returns.std() * np.sqrt(252)
         running_max = cumulative.cummax()
@@ -102,7 +84,7 @@ with tab1:
         calmar = cagr / abs(mdd) if mdd != 0 else 0
         
         down_capture = 1.0 
-        if benchmark_returns is not None:
+        if benchmark_returns is not None and len(benchmark_returns) > 0:
             down_days_mask = benchmark_returns < 0
             if down_days_mask.sum() > 0:
                 port_down_ret = (1 + daily_returns[down_days_mask]).prod() - 1
@@ -128,16 +110,48 @@ with tab1:
         try:
             with st.spinner('從 Yahoo Finance 撈取數據中...'):
                 all_tickers = list(set(clean_tickers + [benchmark_ticker]))
-                raw_data = get_data(all_tickers, start_date, end_date).dropna()
+                raw_data = get_data(all_tickers, start_date, end_date)
+
+            # 【防線 2】檢查 Yahoo Finance 是否回傳空資料
+            if raw_data.empty:
+                st.error("❌ 錯誤：無法從 Yahoo Finance 取得資料。請檢查「股票代號」是否打錯，或「日期區間」內是否有開盤交易。")
+                st.stop()
+
+            # 處理掉遺失值
+            raw_data = raw_data.dropna(how='all') 
 
             if isinstance(raw_data, pd.Series):
                 raw_data = raw_data.to_frame(name=clean_tickers[0])
 
-            returns = raw_data.pct_change().dropna()
+            returns = raw_data.pct_change().dropna(how='all')
+            
+            # 【防線 3】檢查計算報酬率後還有沒有資料
+            if returns.empty:
+                st.error("❌ 錯誤：計算報酬率後無有效資料。這通常是因為你選擇的「開始日期」太近（例如今天），導致沒有足夠的歷史資料可供計算。請把日期往前調。")
+                st.stop()
+
+            # 只保留大家都有資料的欄位 (避免有股票找不到)
+            available_tickers = [t for t in clean_tickers if t in returns.columns]
+            if len(available_tickers) != len(clean_tickers):
+                missing = set(clean_tickers) - set(available_tickers)
+                st.warning(f"⚠️ 警告：找不到以下標的的資料：{missing}。可能是代號錯誤。")
+                st.stop()
+
             portfolio_ret = (returns[clean_tickers] * clean_weights).sum(axis=1)
-            benchmark_ret = returns[benchmark_ticker]
+            
+            if benchmark_ticker in returns.columns:
+                benchmark_ret = returns[benchmark_ticker]
+            else:
+                st.error(f"❌ 錯誤：找不到比較基準 '{benchmark_ticker}' 的資料。")
+                st.stop()
 
             common_index = portfolio_ret.index.intersection(benchmark_ret.index)
+            
+            # 【防線 4】檢查對齊日期後還有沒有資料 (例如某檔股票去年才上市)
+            if common_index.empty:
+                st.error("❌ 錯誤：你輸入的標的與大盤之間，沒有共同的交易日重疊。這可能是因為某檔股票剛上市不久，無法與大盤的長天期資料對齊。")
+                st.stop()
+
             portfolio_ret = portfolio_ret.loc[common_index]
             benchmark_ret = benchmark_ret.loc[common_index]
 
@@ -164,16 +178,18 @@ with tab1:
 
             st.subheader("📈 財富累積曲線 (Wealth Index)")
             fig1 = go.Figure()
-            fig1.add_trace(go.Scatter(x=p_metrics[7].index, y=p_metrics[7], mode='lines', name='My Portfolio', line=dict(color='blue', width=2)))
-            fig1.add_trace(go.Scatter(x=b_metrics[7].index, y=b_metrics[7], mode='lines', name=benchmark_ticker, line=dict(color='gray', dash='dot')))
+            if not p_metrics[7].empty:
+                fig1.add_trace(go.Scatter(x=p_metrics[7].index, y=p_metrics[7], mode='lines', name='My Portfolio', line=dict(color='blue', width=2)))
+                fig1.add_trace(go.Scatter(x=b_metrics[7].index, y=b_metrics[7], mode='lines', name=benchmark_ticker, line=dict(color='gray', dash='dot')))
             fig1.update_layout(hovermode="x unified")
             st.plotly_chart(fig1, use_container_width=True)
 
             st.subheader("🌊 水下圖 (MDD Analysis)")
             fig2 = go.Figure()
-            fig2.add_trace(go.Scatter(x=p_metrics[8].index, y=p_metrics[8], fill='tozeroy', name='My Portfolio', line=dict(color='red')))
+            if not p_metrics[8].empty:
+                fig2.add_trace(go.Scatter(x=p_metrics[8].index, y=p_metrics[8], fill='tozeroy', name='My Portfolio', line=dict(color='red')))
             fig2.update_layout(hovermode="x unified", yaxis_tickformat='.0%')
             st.plotly_chart(fig2, use_container_width=True)
 
         except Exception as e:
-            st.error(f"發生錯誤：{str(e)}")
+            st.error(f"發生未預期錯誤：{str(e)}")
