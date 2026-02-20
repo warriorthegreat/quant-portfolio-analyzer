@@ -20,7 +20,7 @@ with tab2:
     **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** 是一個專為量化投資人打造的專業級回測與風險評估工具。
     
     ### 👨‍💻 開發團隊 (Credits)
-    * **系統架構與主開發者：** [你的名字/暱稱] (量化投資研究員)
+    * **系統架構與主開發者：** [Alvin Zhang] (HIS, BA at NTU )
     * **AI 協同開發顧問：** Google Gemini (雙博士理財與資工顧問)
     * **核心運算引擎：** Python, Streamlit, Pandas, yfinance, Plotly
     
