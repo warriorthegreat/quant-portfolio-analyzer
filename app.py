@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 
 # --- 網頁設定 ---
-st.set_page_config(page_title="雙博士投資組合分析儀 V2.3", layout="wide")
+st.set_page_config(page_title="雙博士投資組合分析儀 V2.4", layout="wide")
 
 # --- 建立雙分頁 (Tabs) ---
 tab1, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "ℹ️ 系統資訊 (About)"])
@@ -17,7 +17,8 @@ tab1, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "ℹ️ 系統資訊 (Abou
 with tab2:
     st.header("ℹ️ 關於本系統")
     st.markdown("""
-    **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** * **V2.3 更新：** 加入強大的資料空值與 API 防呆攔截機制，防止 `out-of-bounds` 錯誤。
+    **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** * **V2.4 更新：** 新增「無效代號掃描器」，精準抓出輸入錯誤的股票代號（包含比較基準），並自動清理空白與大小寫格式。
+    * **V2.3 更新：** 加入強大的資料空值與 API 防呆攔截機制。
     * **V2.2 更新：** 導入雙分頁架構。
     """)
 
@@ -47,25 +48,27 @@ with tab1:
             d_weight = default_weights[i] if i < len(default_weights) else 0
             w = st.number_input(f"權重(%)", min_value=0, max_value=100, value=d_weight, key=f"weight_{i}")
             
-        tickers_list.append(t.strip())
+        tickers_list.append(t)
         weights_list.append(w)
 
     st.sidebar.divider() 
     start_date = st.sidebar.date_input("開始日期", datetime(2021, 1, 1))
     end_date = st.sidebar.date_input("結束日期", datetime.now())
-    benchmark_ticker = st.sidebar.text_input("比較基準 (Benchmark)", "0050.TW")
+    
+    # 比較基準也納入變數
+    raw_benchmark = st.sidebar.text_input("比較基準 (Benchmark)", "0050.TW")
 
     # --- 核心運算函數 ---
     @st.cache_data
     def get_data(tickers, start, end):
         valid_tickers = [t for t in tickers if t] 
-        df = yf.download(valid_tickers, start=start, end=end, auto_adjust=True)
+        # yfinance 抓不到資料時會印出錯誤，但程式會繼續跑，回傳 NaN
+        df = yf.download(valid_tickers, start=start, end=end, auto_adjust=True, progress=False)
         if 'Close' in df.columns:
             return df['Close']
         return df
 
     def calculate_metrics(daily_returns, benchmark_returns=None):
-        # 【防線 1】如果傳進來的資料是空的，直接回傳 0，避免 iloc[-1] 崩潰
         if len(daily_returns) == 0:
             return 0, 0, 0, 0, 0, 0, 1.0, pd.Series(dtype=float), pd.Series(dtype=float)
 
@@ -95,12 +98,16 @@ with tab1:
 
     # --- 執行分析按鈕邏輯 ---
     if st.sidebar.button("🚀 開始分析 (Run Analysis)"):
+        # 【V2.4 升級】自動清理字串：去頭尾空白、全轉大寫
         clean_tickers = []
         clean_weights = []
         for t, w in zip(tickers_list, weights_list):
-            if t != "":  
-                clean_tickers.append(t)
+            t_clean = t.strip().upper()
+            if t_clean != "":  
+                clean_tickers.append(t_clean)
                 clean_weights.append(float(w)/100)
+                
+        benchmark_ticker = raw_benchmark.strip().upper()
         
         total_weight = sum(clean_weights) * 100
         if abs(total_weight - 100) > 0.1: 
@@ -112,44 +119,44 @@ with tab1:
                 all_tickers = list(set(clean_tickers + [benchmark_ticker]))
                 raw_data = get_data(all_tickers, start_date, end_date)
 
-            # 【防線 2】檢查 Yahoo Finance 是否回傳空資料
-            if raw_data.empty:
-                st.error("❌ 錯誤：無法從 Yahoo Finance 取得資料。請檢查「股票代號」是否打錯，或「日期區間」內是否有開盤交易。")
+            # 如果只有一檔股票，轉成 DataFrame 以利後續判斷
+            if isinstance(raw_data, pd.Series):
+                raw_data = raw_data.to_frame(name=all_tickers[0])
+
+            # 【V2.4 防線】精準核對「下載下來的欄位」跟「使用者輸入的代號」
+            downloaded_columns = raw_data.columns.tolist()
+            
+            # 1. 檢查比較基準 (Benchmark) 存不存在
+            if benchmark_ticker not in downloaded_columns or raw_data[benchmark_ticker].dropna().empty:
+                st.error(f"❌ 代號錯誤：找不到比較基準 **'{benchmark_ticker}'** 的資料！請確認代號是否輸入正確（如台股請加上 .TW）。")
                 st.stop()
 
-            # 處理掉遺失值
+            # 2. 檢查投資組合裡的標的存不存在
+            invalid_tickers = []
+            for t in clean_tickers:
+                # 判斷標準：欄位不存在，或者該欄位全部都是 NaN（空值）
+                if t not in downloaded_columns or raw_data[t].dropna().empty:
+                    invalid_tickers.append(t)
+            
+            if invalid_tickers:
+                st.error(f"❌ 代號錯誤：找不到以下標的 **{invalid_tickers}** 的資料！請確認代號是否輸入正確（例如輸入了不存在的 '0'）。")
+                st.stop()
+
+            # 通過所有檢查後，處理掉遺失值開始計算
             raw_data = raw_data.dropna(how='all') 
-
-            if isinstance(raw_data, pd.Series):
-                raw_data = raw_data.to_frame(name=clean_tickers[0])
-
             returns = raw_data.pct_change().dropna(how='all')
             
-            # 【防線 3】檢查計算報酬率後還有沒有資料
             if returns.empty:
-                st.error("❌ 錯誤：計算報酬率後無有效資料。這通常是因為你選擇的「開始日期」太近（例如今天），導致沒有足夠的歷史資料可供計算。請把日期往前調。")
-                st.stop()
-
-            # 只保留大家都有資料的欄位 (避免有股票找不到)
-            available_tickers = [t for t in clean_tickers if t in returns.columns]
-            if len(available_tickers) != len(clean_tickers):
-                missing = set(clean_tickers) - set(available_tickers)
-                st.warning(f"⚠️ 警告：找不到以下標的的資料：{missing}。可能是代號錯誤。")
+                st.error("❌ 錯誤：計算報酬率後無有效資料。這通常是因為你選擇的日期區間太短或遇到連續休市。")
                 st.stop()
 
             portfolio_ret = (returns[clean_tickers] * clean_weights).sum(axis=1)
-            
-            if benchmark_ticker in returns.columns:
-                benchmark_ret = returns[benchmark_ticker]
-            else:
-                st.error(f"❌ 錯誤：找不到比較基準 '{benchmark_ticker}' 的資料。")
-                st.stop()
+            benchmark_ret = returns[benchmark_ticker]
 
             common_index = portfolio_ret.index.intersection(benchmark_ret.index)
             
-            # 【防線 4】檢查對齊日期後還有沒有資料 (例如某檔股票去年才上市)
             if common_index.empty:
-                st.error("❌ 錯誤：你輸入的標的與大盤之間，沒有共同的交易日重疊。這可能是因為某檔股票剛上市不久，無法與大盤的長天期資料對齊。")
+                st.error("❌ 錯誤：你輸入的標的與大盤之間，沒有共同的交易日重疊。")
                 st.stop()
 
             portfolio_ret = portfolio_ret.loc[common_index]
