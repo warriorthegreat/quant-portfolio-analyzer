@@ -6,30 +6,137 @@ import plotly.graph_objects as go
 from datetime import datetime
 
 # --- 網頁設定 ---
-st.set_page_config(page_title="雙博士投資組合分析儀 V2.5", layout="wide")
+st.set_page_config(page_title="雙博士投資組合分析儀 V2.7.1", layout="wide")
 
-# --- 建立雙分頁 (Tabs) ---
-tab1, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "ℹ️ 系統資訊 (About)"])
+# --- 建立三分頁 (Tabs) ---
+tab1, tab3, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "⚔️ ETF 擂台 (Compare)", "ℹ️ 系統資訊 (About)"])
 
 # ==========================================
-#  分頁 2：系統資訊 (About)
+#  分頁 3：系統資訊 (About)
 # ==========================================
 with tab2:
     st.header("ℹ️ 關於本系統")
     st.markdown("""
-    **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** * **V2.5 更新：** 實裝 Plotly 動態甜甜圈圖 (Donut Chart)，視覺化呈現資產配置權重。
-    * **V2.4 更新：** 新增「無效代號掃描器」，精準抓出輸入錯誤的股票代號，並自動清理字串格式。
-    * **V2.3 更新：** 加入強大的資料空值與 API 防呆攔截機制。
+    **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** * **V2.7.1 更新：** 修復 ETF 擂台的 try-except 縮排錯誤 (Indentation Bug)。
+    * **V2.7 更新：** 全新上線「ETF 擂台」，支援兩檔 ETF 深度對決與雷達圖分析。
+    * **V2.6 更新：** 圖表區加入「白話文翻譯」輔助說明，並優化數值顯示格式。
+    * **V2.5 更新：** 實裝 Plotly 動態甜甜圈圖 (Donut Chart)。
     """)
 
 # ==========================================
-#  分頁 1：量化分析主程式 (Analyzer)
+#  分頁 2：ETF 擂台 (Compare) - V2.7.1 修正版
+# ==========================================
+with tab3:
+    st.title("⚔️ ETF 終極擂台")
+    st.markdown("輸入兩檔 ETF 進行一對一單挑。系統將自動計算歷史績效，並嘗試抓取資產規模等基本面數據。")
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        etf_a = st.text_input("輸入第一檔 ETF 代號 (例如 VOO)", value="VOO").strip().upper()
+    with col_b:
+        etf_b = st.text_input("輸入第二檔 ETF 代號 (例如 SPY)", value="SPY").strip().upper()
+        
+    c_start_date = st.date_input("比較起始日期", datetime(2020, 1, 1), key="compare_start")
+    
+    # 建立核心計算函數 (共用邏輯)
+    def calc_single_asset_metrics(daily_returns):
+        if len(daily_returns) == 0:
+            return 0, 0, 0, 0, 0
+        cumulative = (1 + daily_returns).cumprod()
+        total_return = cumulative.iloc[-1] - 1
+        n_years = len(daily_returns) / 252
+        cagr = (1 + total_return) ** (1 / n_years) - 1 if n_years > 0 else 0
+        volatility = daily_returns.std() * np.sqrt(252)
+        running_max = cumulative.cummax()
+        mdd = ((cumulative - running_max) / running_max).min()
+        sharpe = (cagr - 0.03) / volatility if volatility != 0 else 0
+        return total_return, cagr, volatility, mdd, sharpe
+    
+    # 數字格式化小工具
+    def format_currency(num):
+        if num is None or pd.isna(num): return "N/A"
+        if num >= 1e9: return f"{num/1e9:.2f} B (十億)"
+        if num >= 1e6: return f"{num/1e6:.2f} M (百萬)"
+        return f"{num:,.0f}"
+
+    if st.button("🔥 開始對決 (Fight!)"):
+        if etf_a and etf_b:
+            try:
+                with st.spinner('正在同步爬取歷史價格與基本面資料...'):
+                    # 1. 抓取歷史價格
+                    df_dl = yf.download([etf_a, etf_b], start=c_start_date, auto_adjust=True, progress=False)
+                    if 'Close' in df_dl.columns:
+                        df_compare = df_dl['Close']
+                    else:
+                        df_compare = df_dl
+
+                    df_compare = df_compare.dropna(how='any') # 只取共同有交易的日子
+                    
+                    if df_compare.empty:
+                        st.error("❌ 無法取得共同的歷史交易資料，請檢查代號是否正確。")
+                        st.stop()
+                        
+                    ret_a = df_compare[etf_a].pct_change().dropna()
+                    ret_b = df_compare[etf_b].pct_change().dropna()
+                    
+                    metrics_a = calc_single_asset_metrics(ret_a)
+                    metrics_b = calc_single_asset_metrics(ret_b)
+                    
+                    # 2. 抓取基本面資料 (yfinance .info)
+                    info_a = yf.Ticker(etf_a).info
+                    info_b = yf.Ticker(etf_b).info
+                    
+                # --- 顯示對決結果 --- (✅ 這裡的縮排已經完美修正，收進 try 裡面)
+                st.divider()
+                st.subheader("📊 基本面資料比拚")
+                st.caption("⚠️ 註：Yahoo Finance 對非美股 (如台股) 的基本面資料覆蓋率較低，若顯示 N/A 代表官方 API 查無資料。")
+                
+                # 使用表格呈現
+                comp_data = {
+                    "評估項目": ["總資產規模 (AUM)", "殖利率 (Yield)", "52週最高價", "52週最低價"],
+                    f"🔵 {etf_a}": [
+                        format_currency(info_a.get('totalAssets')), 
+                        f"{info_a.get('yield', 0)*100:.2f}%" if info_a.get('yield') else "N/A",
+                        info_a.get('fiftyTwoWeekHigh', 'N/A'),
+                        info_a.get('fiftyTwoWeekLow', 'N/A')
+                    ],
+                    f"🔴 {etf_b}": [
+                        format_currency(info_b.get('totalAssets')), 
+                        f"{info_b.get('yield', 0)*100:.2f}%" if info_b.get('yield') else "N/A",
+                        info_b.get('fiftyTwoWeekHigh', 'N/A'),
+                        info_b.get('fiftyTwoWeekLow', 'N/A')
+                    ]
+                }
+                st.table(pd.DataFrame(comp_data).set_index("評估項目"))
+                
+                # --- 雷達圖對決 ---
+                st.subheader("🕸️ 戰力雷達圖 (Radar Chart)")
+                st.info("💡 白話解釋：涵蓋面積越大的標的，代表其綜合戰鬥力（報酬高、波動低、抗跌能力強）越優秀！")
+                
+                categories = ['年化報酬(CAGR)', '夏普比率(CP值)', '抗跌力(反轉MDD)', '穩定度(反轉波動率)']
+                
+                val_a = [metrics_a[1]*100, metrics_a[4]*10, (1+metrics_a[3])*100, (1-metrics_a[2])*100]
+                val_b = [metrics_b[1]*100, metrics_b[4]*10, (1+metrics_b[3])*100, (1-metrics_b[2])*100]
+                
+                fig_radar = go.Figure()
+                fig_radar.add_trace(go.Scatterpolar(r=val_a, theta=categories, fill='toself', name=etf_a, line_color='blue'))
+                fig_radar.add_trace(go.Scatterpolar(r=val_b, theta=categories, fill='toself', name=etf_b, line_color='red'))
+                fig_radar.update_layout(polar=dict(radialaxis=dict(visible=False)), showlegend=True, margin=dict(t=20, b=20))
+                
+                col_r1, col_radar, col_r2 = st.columns([1, 2, 1])
+                with col_radar:
+                    st.plotly_chart(fig_radar, use_container_width=True)
+                    
+            except Exception as e:
+                st.error(f"比對過程中發生錯誤：{str(e)}")
+
+# ==========================================
+#  分頁 1：量化分析主程式 (Analyzer) -> 保留 V2.6 邏輯
 # ==========================================
 with tab1:
     st.title("📊 Quant Portfolio Analyzer")
     st.markdown("請在左側輸入資產權重，並確保總和為 100%，然後點擊「開始分析」。")
 
-    # --- 側邊欄：輸入參數 ---
     st.sidebar.header("⚙️ 參數設定 (Parameters)")
     num_assets = st.sidebar.number_input("你的投資組合有幾檔標的？", min_value=1, max_value=10, value=4, step=1)
     st.sidebar.markdown("### 📝 填寫資產與權重")
@@ -47,7 +154,6 @@ with tab1:
         with col2:
             d_weight = default_weights[i] if i < len(default_weights) else 0
             w = st.number_input(f"權重(%)", min_value=0, max_value=100, value=d_weight, key=f"weight_{i}")
-            
         tickers_list.append(t)
         weights_list.append(w)
 
@@ -56,7 +162,6 @@ with tab1:
     end_date = st.sidebar.date_input("結束日期", datetime.now())
     raw_benchmark = st.sidebar.text_input("比較基準 (Benchmark)", "0050.TW")
 
-    # --- 核心運算函數 ---
     @st.cache_data
     def get_data(tickers, start, end):
         valid_tickers = [t for t in tickers if t] 
@@ -73,12 +178,10 @@ with tab1:
         total_return = cumulative.iloc[-1] - 1
         n_years = len(daily_returns) / 252
         cagr = (1 + total_return) ** (1 / n_years) - 1 if n_years > 0 else 0
-        
         volatility = daily_returns.std() * np.sqrt(252)
         running_max = cumulative.cummax()
         drawdown = (cumulative - running_max) / running_max
         mdd = drawdown.min()
-        
         rf = 0.03
         sharpe = (cagr - rf) / volatility if volatility != 0 else 0
         calmar = cagr / abs(mdd) if mdd != 0 else 0
@@ -93,7 +196,6 @@ with tab1:
 
         return total_return, cagr, volatility, mdd, sharpe, calmar, down_capture, cumulative, drawdown
 
-    # --- 執行分析按鈕邏輯 ---
     if st.sidebar.button("🚀 開始分析 (Run Analysis)"):
         clean_tickers = []
         clean_weights = []
@@ -119,7 +221,6 @@ with tab1:
                 raw_data = raw_data.to_frame(name=all_tickers[0])
 
             downloaded_columns = raw_data.columns.tolist()
-            
             if benchmark_ticker not in downloaded_columns or raw_data[benchmark_ticker].dropna().empty:
                 st.error(f"❌ 代號錯誤：找不到比較基準 **'{benchmark_ticker}'** 的資料！請確認代號是否輸入正確。")
                 st.stop()
@@ -128,7 +229,6 @@ with tab1:
             for t in clean_tickers:
                 if t not in downloaded_columns or raw_data[t].dropna().empty:
                     invalid_tickers.append(t)
-            
             if invalid_tickers:
                 st.error(f"❌ 代號錯誤：找不到以下標的 **{invalid_tickers}** 的資料！請確認代號是否輸入正確。")
                 st.stop()
@@ -142,7 +242,6 @@ with tab1:
 
             portfolio_ret = (returns[clean_tickers] * clean_weights).sum(axis=1)
             benchmark_ret = returns[benchmark_ticker]
-
             common_index = portfolio_ret.index.intersection(benchmark_ret.index)
             
             if common_index.empty:
@@ -151,63 +250,47 @@ with tab1:
 
             portfolio_ret = portfolio_ret.loc[common_index]
             benchmark_ret = benchmark_ret.loc[common_index]
-
             p_metrics = calculate_metrics(portfolio_ret, benchmark_ret)
             b_metrics = calculate_metrics(benchmark_ret, benchmark_ret) 
 
             # --- 顯示結果 UI ---
             st.subheader("🏆 績效與防禦力總覽")
-            
             c1, c2, c3 = st.columns(3)
             c1.metric("總報酬率", f"{p_metrics[0]:.2%}", f"{(p_metrics[0]-b_metrics[0])*100:.2f} p.p.")
             c2.metric("年化報酬 (CAGR)", f"{p_metrics[1]:.2%}", f"{(p_metrics[1]-b_metrics[1])*100:.2f} p.p.")
             c3.metric("夏普比率 (CP值)", f"{p_metrics[4]:.2f}", f"{p_metrics[4]-b_metrics[4]:.2f}")
-
             st.markdown("<br>", unsafe_allow_html=True) 
-
             c4, c5, c6, c7 = st.columns(4)
             c4.metric("波動率 (越低越好)", f"{p_metrics[2]:.2%}", f"{(p_metrics[2]-b_metrics[2])*100:.2f} p.p.", delta_color="inverse")
             c5.metric("最大回撤 MDD", f"{p_metrics[3]:.2%}", f"{(p_metrics[3]-b_metrics[3])*100:.2f} p.p.", delta_color="inverse")
             c6.metric("🛡️ 卡瑪比率", f"{p_metrics[5]:.2f}", f"{p_metrics[5]-b_metrics[5]:.2f}")
             c7.metric("🛡️ 下檔捕獲率", f"{p_metrics[6]:.2%}", f"{(p_metrics[6]-b_metrics[6])*100:.2f} p.p.", delta_color="inverse")
-
             st.divider()
 
-            # --- 【V2.5 升級】加入資產配置甜甜圈圖 ---
+            # --- 甜甜圈圖 ---
             st.subheader("🍩 資產配置權重 (Asset Allocation)")
-            
-            # 使用 Plotly 畫圓餅圖，設定 hole=0.4 變成甜甜圈
-            fig_pie = go.Figure(data=[go.Pie(
-                labels=clean_tickers, 
-                values=clean_weights, 
-                hole=0.4,
-                textinfo='label+percent', # 顯示標籤與百分比
-                insidetextorientation='radial'
-            )])
-            
-            # 調整圖表外觀，把多餘的邊界空白拿掉
+            fig_pie = go.Figure(data=[go.Pie(labels=clean_tickers, values=clean_weights, hole=0.4, textinfo='label+percent', insidetextorientation='radial')])
             fig_pie.update_layout(margin=dict(t=20, b=20, l=0, r=0), height=350)
-            
-            # 為了版面好看，我們用 columns 把圖表置中或限制寬度
             col_space1, col_pie, col_space2 = st.columns([1, 2, 1])
             with col_pie:
                 st.plotly_chart(fig_pie, use_container_width=True)
-
             st.divider()
 
-            # --- 走勢圖 ---
+            # --- 走勢圖與水下圖 ---
             st.subheader("📈 財富累積曲線 (Wealth Index)")
+            st.info("**💡 白話解釋：** 假設你在起點投入了 **1 元**，這條線代表你總資產的成長變化。大盤的虛線讓你一眼看出有沒有跑贏大盤。")
             fig1 = go.Figure()
             if not p_metrics[7].empty:
-                fig1.add_trace(go.Scatter(x=p_metrics[7].index, y=p_metrics[7], mode='lines', name='My Portfolio', line=dict(color='blue', width=2)))
-                fig1.add_trace(go.Scatter(x=b_metrics[7].index, y=b_metrics[7], mode='lines', name=benchmark_ticker, line=dict(color='gray', dash='dot')))
+                fig1.add_trace(go.Scatter(x=p_metrics[7].index, y=p_metrics[7], mode='lines', name='我的投資組合', line=dict(color='blue', width=2), hovertemplate='%{y:.2f} 倍'))
+                fig1.add_trace(go.Scatter(x=b_metrics[7].index, y=b_metrics[7], mode='lines', name=f'大盤 ({benchmark_ticker})', line=dict(color='gray', dash='dot'), hovertemplate='%{y:.2f} 倍'))
             fig1.update_layout(hovermode="x unified")
             st.plotly_chart(fig1, use_container_width=True)
 
-            st.subheader("🌊 水下圖 (MDD Analysis)")
+            st.subheader("🌊 水下圖 (Underwater Chart / Drawdown)")
+            st.info("**💡 白話解釋（套牢痛苦指數）：** 專門衡量股災時的「虧損痛感」。**0%** 代表沒有虧損。跌到 **-20%**，代表資產從最高點縮水了 20%。")
             fig2 = go.Figure()
             if not p_metrics[8].empty:
-                fig2.add_trace(go.Scatter(x=p_metrics[8].index, y=p_metrics[8], fill='tozeroy', name='My Portfolio', line=dict(color='red')))
+                fig2.add_trace(go.Scatter(x=p_metrics[8].index, y=p_metrics[8], fill='tozeroy', name='我的投資組合', line=dict(color='red'), hovertemplate='回撤跌幅: %{y:.2%}'))
             fig2.update_layout(hovermode="x unified", yaxis_tickformat='.0%')
             st.plotly_chart(fig2, use_container_width=True)
 
