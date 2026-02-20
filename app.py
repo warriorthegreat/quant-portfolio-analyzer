@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 
 # --- 網頁設定 ---
-st.set_page_config(page_title="雙博士投資組合分析儀 V2.4", layout="wide")
+st.set_page_config(page_title="雙博士投資組合分析儀 V2.5", layout="wide")
 
 # --- 建立雙分頁 (Tabs) ---
 tab1, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "ℹ️ 系統資訊 (About)"])
@@ -17,9 +17,9 @@ tab1, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "ℹ️ 系統資訊 (Abou
 with tab2:
     st.header("ℹ️ 關於本系統")
     st.markdown("""
-    **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** * **V2.4 更新：** 新增「無效代號掃描器」，精準抓出輸入錯誤的股票代號（包含比較基準），並自動清理空白與大小寫格式。
+    **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** * **V2.5 更新：** 實裝 Plotly 動態甜甜圈圖 (Donut Chart)，視覺化呈現資產配置權重。
+    * **V2.4 更新：** 新增「無效代號掃描器」，精準抓出輸入錯誤的股票代號，並自動清理字串格式。
     * **V2.3 更新：** 加入強大的資料空值與 API 防呆攔截機制。
-    * **V2.2 更新：** 導入雙分頁架構。
     """)
 
 # ==========================================
@@ -54,15 +54,12 @@ with tab1:
     st.sidebar.divider() 
     start_date = st.sidebar.date_input("開始日期", datetime(2021, 1, 1))
     end_date = st.sidebar.date_input("結束日期", datetime.now())
-    
-    # 比較基準也納入變數
     raw_benchmark = st.sidebar.text_input("比較基準 (Benchmark)", "0050.TW")
 
     # --- 核心運算函數 ---
     @st.cache_data
     def get_data(tickers, start, end):
         valid_tickers = [t for t in tickers if t] 
-        # yfinance 抓不到資料時會印出錯誤，但程式會繼續跑，回傳 NaN
         df = yf.download(valid_tickers, start=start, end=end, auto_adjust=True, progress=False)
         if 'Close' in df.columns:
             return df['Close']
@@ -98,7 +95,6 @@ with tab1:
 
     # --- 執行分析按鈕邏輯 ---
     if st.sidebar.button("🚀 開始分析 (Run Analysis)"):
-        # 【V2.4 升級】自動清理字串：去頭尾空白、全轉大寫
         clean_tickers = []
         clean_weights = []
         for t, w in zip(tickers_list, weights_list):
@@ -108,8 +104,8 @@ with tab1:
                 clean_weights.append(float(w)/100)
                 
         benchmark_ticker = raw_benchmark.strip().upper()
-        
         total_weight = sum(clean_weights) * 100
+        
         if abs(total_weight - 100) > 0.1: 
             st.error(f"❌ 錯誤：你的權重總和是 {total_weight:.1f}%，必須剛好等於 100%！")
             st.stop() 
@@ -119,30 +115,24 @@ with tab1:
                 all_tickers = list(set(clean_tickers + [benchmark_ticker]))
                 raw_data = get_data(all_tickers, start_date, end_date)
 
-            # 如果只有一檔股票，轉成 DataFrame 以利後續判斷
             if isinstance(raw_data, pd.Series):
                 raw_data = raw_data.to_frame(name=all_tickers[0])
 
-            # 【V2.4 防線】精準核對「下載下來的欄位」跟「使用者輸入的代號」
             downloaded_columns = raw_data.columns.tolist()
             
-            # 1. 檢查比較基準 (Benchmark) 存不存在
             if benchmark_ticker not in downloaded_columns or raw_data[benchmark_ticker].dropna().empty:
-                st.error(f"❌ 代號錯誤：找不到比較基準 **'{benchmark_ticker}'** 的資料！請確認代號是否輸入正確（如台股請加上 .TW）。")
+                st.error(f"❌ 代號錯誤：找不到比較基準 **'{benchmark_ticker}'** 的資料！請確認代號是否輸入正確。")
                 st.stop()
 
-            # 2. 檢查投資組合裡的標的存不存在
             invalid_tickers = []
             for t in clean_tickers:
-                # 判斷標準：欄位不存在，或者該欄位全部都是 NaN（空值）
                 if t not in downloaded_columns or raw_data[t].dropna().empty:
                     invalid_tickers.append(t)
             
             if invalid_tickers:
-                st.error(f"❌ 代號錯誤：找不到以下標的 **{invalid_tickers}** 的資料！請確認代號是否輸入正確（例如輸入了不存在的 '0'）。")
+                st.error(f"❌ 代號錯誤：找不到以下標的 **{invalid_tickers}** 的資料！請確認代號是否輸入正確。")
                 st.stop()
 
-            # 通過所有檢查後，處理掉遺失值開始計算
             raw_data = raw_data.dropna(how='all') 
             returns = raw_data.pct_change().dropna(how='all')
             
@@ -165,7 +155,7 @@ with tab1:
             p_metrics = calculate_metrics(portfolio_ret, benchmark_ret)
             b_metrics = calculate_metrics(benchmark_ret, benchmark_ret) 
 
-            # --- 顯示結果 ---
+            # --- 顯示結果 UI ---
             st.subheader("🏆 績效與防禦力總覽")
             
             c1, c2, c3 = st.columns(3)
@@ -183,6 +173,29 @@ with tab1:
 
             st.divider()
 
+            # --- 【V2.5 升級】加入資產配置甜甜圈圖 ---
+            st.subheader("🍩 資產配置權重 (Asset Allocation)")
+            
+            # 使用 Plotly 畫圓餅圖，設定 hole=0.4 變成甜甜圈
+            fig_pie = go.Figure(data=[go.Pie(
+                labels=clean_tickers, 
+                values=clean_weights, 
+                hole=0.4,
+                textinfo='label+percent', # 顯示標籤與百分比
+                insidetextorientation='radial'
+            )])
+            
+            # 調整圖表外觀，把多餘的邊界空白拿掉
+            fig_pie.update_layout(margin=dict(t=20, b=20, l=0, r=0), height=350)
+            
+            # 為了版面好看，我們用 columns 把圖表置中或限制寬度
+            col_space1, col_pie, col_space2 = st.columns([1, 2, 1])
+            with col_pie:
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+            st.divider()
+
+            # --- 走勢圖 ---
             st.subheader("📈 財富累積曲線 (Wealth Index)")
             fig1 = go.Figure()
             if not p_metrics[7].empty:
