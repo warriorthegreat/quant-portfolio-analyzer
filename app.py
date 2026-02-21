@@ -9,7 +9,68 @@ from datetime import datetime
 st.set_page_config(page_title="雙博士投資組合分析儀 V3.2", layout="wide")
 
 # --- 建立三分頁 (Tabs) ---
-tab1, tab3, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "⚔️ ETF 擂台 (Compare)", "ℹ️ 系統資訊 (About)"])
+# 建立四個主要分頁 (為了不影響你原本的變數，我們把新分頁叫 tab4 並安插在第三個位置)
+tab1, tab3, tab4, tab2 = st.tabs([
+    "📊 量化分析 (Analyzer)", 
+    "⚔️ ETF 擂台 (Compare)", 
+    "🌱 定期定額推演 (DCA)", 
+    "ℹ️ 系統資訊 (About)"
+])
+
+# ==========================================
+#  分頁 4 (UI 排序第 3)：定期定額複利推演 (DCA)
+# ==========================================
+with tab4:
+    st.header("🌱 巴菲特時間魔法：定期定額財富推演")
+    st.info("💡 這裡的推演模擬了真實世界中投資人「初始一筆資金 + 每月持續投入」的資產增長軌跡。")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        initial_capital = st.number_input("初始單筆本金 (元)", min_value=0, value=100000, step=10000)
+    with col2:
+        monthly_investment = st.number_input("每月定期定額投入 (元)", min_value=0, value=10000, step=1000)
+    with col3:
+        expected_cagr = st.number_input("預期年化報酬率 (%)", min_value=0.0, value=7.0, step=0.5)
+
+    invest_years = st.slider("預計投資年限 (年)", min_value=1, max_value=50, value=20)
+
+    # 複利計算邏輯 (按月滾動)
+    months = invest_years * 12
+    monthly_rate = (expected_cagr / 100) / 12
+    
+    current_value = initial_capital
+    total_principal = initial_capital
+    
+    values_list = [current_value]
+    principals_list = [total_principal]
+    
+    for i in range(months):
+        current_value = current_value * (1 + monthly_rate) + monthly_investment
+        total_principal += monthly_investment
+        
+        # 每年年底記錄一次數據畫圖用
+        if (i + 1) % 12 == 0:
+            values_list.append(current_value)
+            principals_list.append(total_principal)
+
+    import plotly.graph_objects as go
+    years_x = list(range(invest_years + 1))
+    
+    fig_fv = go.Figure()
+    fig_fv.add_trace(go.Scatter(x=years_x, y=values_list, mode='lines', name='總資產價值', 
+                                line=dict(color='green', width=3), fill='tozeroy', hovertemplate='$%{y:,.0f}'))
+    fig_fv.add_trace(go.Scatter(x=years_x, y=principals_list, mode='lines', name='累積投入本金', 
+                                line=dict(color='gray', dash='dash', width=2), hovertemplate='$%{y:,.0f}'))
+    
+    fig_fv.update_layout(title="定期定額複利成長曲線", xaxis_title="投資年數", yaxis_title="累積金額", hovermode="x unified")
+    st.plotly_chart(fig_fv, use_container_width=True)
+
+    # 總結數據卡片
+    m1, m2, m3 = st.columns(3)
+    m1.metric("總投入本金", f"${total_principal:,.0f}")
+    m2.metric("最終總資產", f"${current_value:,.0f}")
+    m3.metric("純複利獲利", f"${(current_value - total_principal):,.0f}")
+
 
 # ==========================================
 #  分頁 3：系統資訊 (About)
