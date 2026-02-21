@@ -161,6 +161,15 @@ with tab1:
     st.sidebar.divider() 
     start_date = st.sidebar.date_input("開始日期", datetime(2015, 1, 1))
     end_date = st.sidebar.date_input("結束日期", datetime.now())
+
+    st.sidebar.markdown("### 🔄 進階分析設定")
+    rolling_years = st.sidebar.selectbox(
+        "選擇滾動分析週期 (Rolling Period)：", 
+        options=[1, 3, 5], 
+        format_func=lambda x: f"{x} 年期"
+    )
+    rolling_days = rolling_years * 252 # 每年約 252 個交易日
+    st.sidebar.divider()
     
     st.sidebar.markdown("### 🎯 比較基準設定")
     BENCHMARKS = {
@@ -306,29 +315,29 @@ with tab1:
             c7.metric("🛡️ 下檔捕獲率", f"{p_metrics[6]:.2%}", f"{(p_metrics[6]-b_metrics[6])*100:.2f}%", delta_color="inverse")
             st.divider()
 
-            # --- 滾動報酬與勝率分析 ---
-            st.subheader("🔄 歷史勝率與滾動報酬 (1-Year Rolling Returns)")
-            st.info("**💡 為什麼我們需要看這個？** 只看「單一起點」會有運氣成分。我們透過「滾動報酬」來測試：**假設你在過去任何一個交易日進場，持有一年後**的真實勝率與報酬分佈！這能最真實反映策略的穩定度。")
+           # --- 動態滾動報酬與勝率分析 ---
+            st.subheader(f"🔄 歷史勝率與滾動報酬 ({rolling_years}-Year Rolling Returns)")
+            st.info(f"**💡 系統解讀：** 假設你在過去任何一個交易日進場，並且**堅持持有 {rolling_years} 年**，以下是你的真實勝率與報酬分佈。週期越長，通常勝率會越高且越穩定。")
 
-            if len(p_metrics[7]) > 252:
-                port_roll_1y = (p_metrics[7] / p_metrics[7].shift(252)) - 1
-                bench_roll_1y = (b_metrics[7] / b_metrics[7].shift(252)) - 1
+            if len(p_metrics[7]) > rolling_days:
+                # 根據使用者選擇的年份，動態切換計算天數 (rolling_days)
+                port_roll = (p_metrics[7] / p_metrics[7].shift(rolling_days)) - 1
+                bench_roll = (b_metrics[7] / b_metrics[7].shift(rolling_days)) - 1
                 
-                # 【V3.2 修復】將兩者放入同一個 DataFrame 進行對齊與去空值，徹底解決 Series 長度不一致問題
-                roll_df = pd.DataFrame({'port': port_roll_1y, 'bench': bench_roll_1y}).dropna()
+                roll_df = pd.DataFrame({'port': port_roll, 'bench': bench_roll}).dropna()
 
                 if not roll_df.empty:
                     win_rate = (roll_df['port'] > 0).mean()
                     beat_market_rate = (roll_df['port'] > roll_df['bench']).mean()
 
                     rc1, rc2, rc3 = st.columns(3)
-                    rc1.metric("持有一年賺錢機率 (勝率)", f"{win_rate:.2%}")
-                    rc2.metric("持有一年打敗大盤機率", f"{beat_market_rate:.2%}")
-                    rc3.metric("一年期平均報酬率", f"{roll_df['port'].mean():.2%}")
+                    rc1.metric(f"持有 {rolling_years} 年賺錢機率 (勝率)", f"{win_rate:.2%}")
+                    rc2.metric(f"持有 {rolling_years} 年打敗大盤機率", f"{beat_market_rate:.2%}")
+                    rc3.metric(f"平均 {rolling_years} 年期報酬率", f"{roll_df['port'].mean():.2%}")
 
                     fig_roll = go.Figure()
-                    fig_roll.add_trace(go.Scatter(x=roll_df.index, y=roll_df['port'], mode='lines', name='我的組合 (1年期)', line=dict(color='purple'), hovertemplate='%{y:.2%}'))
-                    fig_roll.add_trace(go.Scatter(x=roll_df.index, y=roll_df['bench'], mode='lines', name=f'{benchmark_ticker} (1年期)', line=dict(color='gray', dash='dot'), hovertemplate='%{y:.2%}'))
+                    fig_roll.add_trace(go.Scatter(x=roll_df.index, y=roll_df['port'], mode='lines', name=f'我的組合 ({rolling_years}年期)', line=dict(color='purple'), hovertemplate='%{y:.2%}'))
+                    fig_roll.add_trace(go.Scatter(x=roll_df.index, y=roll_df['bench'], mode='lines', name=f'{benchmark_ticker} ({rolling_years}年期)', line=dict(color='gray', dash='dot'), hovertemplate='%{y:.2%}'))
                     fig_roll.add_hline(y=0, line_dash="dash", line_color="red", annotation_text="0% (損益兩平線)", annotation_position="bottom right")
                     
                     fig_roll.update_layout(hovermode="x unified", yaxis_tickformat='.0%')
@@ -336,7 +345,7 @@ with tab1:
                 else:
                     st.warning("⚠️ 對齊資料後無有效區間可供計算。")
             else:
-                st.warning("⚠️ 你的資料區間不足一年 (少於 252 個交易日)，無法計算滾動報酬。請將左側的「開始日期」往前調！")
+                st.warning(f"⚠️ 你的資料區間不足 {rolling_years} 年 (少於 {rolling_days} 個交易日)，無法計算滾動報酬。請將左側的「開始日期」往前調！")
             
             st.divider()
 
