@@ -57,9 +57,9 @@ Alvin Zhang | 國立台灣大學 圖書資訊學系研究所 (NTU LIS)
    cd 你的儲存庫
    
 2. 安裝所需套件：
-Bash
+```bash
 pip install -r requirements.txt
 
 3. 啟動 Streamlit 伺服器：
-Bash
+```bash
 streamlit run app.py
