@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 
 # --- 網頁設定 ---
-st.set_page_config(page_title="雙博士投資組合分析儀 V3.1", layout="wide")
+st.set_page_config(page_title="雙博士投資組合分析儀 V3.2", layout="wide")
 
 # --- 建立三分頁 (Tabs) ---
 tab1, tab3, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "⚔️ ETF 擂台 (Compare)", "ℹ️ 系統資訊 (About)"])
@@ -16,19 +16,18 @@ tab1, tab3, tab2 = st.tabs(["📊 量化分析 (Analyzer)", "⚔️ ETF 擂台 (
 # ==========================================
 with tab2:
     st.header("ℹ️ 關於本系統 (About)")
-    st.markdown("""
+    st.markdown(f"""
     **雙博士投資組合分析儀 (Quant Portfolio Analyzer)** 是一個專為量化投資人打造的專業級回測與風險評估工具。
     
     ### 👨‍💻 開發團隊 (Credits)
-    * **系統架構與主開發者：** [你的名字/暱稱] (量化投資研究員)
+    * **系統架構與主開發者：** [Alvin Zhang (BA, History, NTU)](https://www.linkedin.com/in/kun-jie-zhang-376902284/) (圖書資訊系研究生)
     * **AI 協同開發顧問：** Google Gemini (雙博士理財與資工顧問)
     * **核心運算引擎：** Python, Streamlit, Pandas, yfinance, Plotly
     
     ---
     ### 🔄 版本更新紀錄 (Changelog)
-    * **V3.1 更新：** 將生硬的 p.p. 單位改為直觀的 %，並重磅推出「1年期滾動報酬與勝率分析」，消除起點偏差。
-    * **V3.0 (Release)：** 正式發行版上線，加入全域開發者署名。
-    * **V2.9 更新：** 新增「比較基準 (Benchmark)」智慧下拉選單。
+    * **V3.2 (Hotfix)：** 修復跨國資產休市不對齊錯誤，導入 ffill() 機制。
+    * **V3.1 更新：** 指標改為 % 顯示，新增 1 年期滾動報酬與勝率分析。
     """)
 
 # ==========================================
@@ -75,14 +74,15 @@ with tab3:
                     else:
                         df_compare = df_dl
 
-                    df_compare = df_compare.dropna(how='any') 
+                    # 【V3.2 修復】使用 ffill 填補休市價格，避免跨國 ETF 比較時資料遺失
+                    df_compare = df_compare.ffill().dropna(how='all') 
                     
                     if df_compare.empty:
                         st.error("❌ 無法取得共同的歷史交易資料，請檢查代號是否正確。")
                         st.stop()
                         
-                    ret_a = df_compare[etf_a].pct_change().dropna()
-                    ret_b = df_compare[etf_b].pct_change().dropna()
+                    ret_a = df_compare[etf_a].pct_change().fillna(0)
+                    ret_b = df_compare[etf_b].pct_change().fillna(0)
                     
                     metrics_a = calc_single_asset_metrics(ret_a)
                     metrics_b = calc_single_asset_metrics(ret_b)
@@ -159,7 +159,7 @@ with tab1:
         weights_list.append(w)
 
     st.sidebar.divider() 
-    start_date = st.sidebar.date_input("開始日期", datetime(2015, 1, 1)) # 預設拉長一點，讓滾動報酬有資料算
+    start_date = st.sidebar.date_input("開始日期", datetime(2015, 1, 1))
     end_date = st.sidebar.date_input("結束日期", datetime.now())
     
     st.sidebar.markdown("### 🎯 比較基準設定")
@@ -182,8 +182,8 @@ with tab1:
         raw_benchmark = BENCHMARKS[selected_bench_name]
 
     st.sidebar.markdown("<br><br>", unsafe_allow_html=True) 
-    st.sidebar.info("""
-    👨‍💻 **Developed by:** [你的名字/暱稱]  
+    st.sidebar.info(f"""
+    👨‍💻 **Developed by:** [Alvin Zhang (BA, History, NTU)](https://www.linkedin.com/in/kun-jie-zhang-376902284/)  
     🤖 **Co-Pilot:** Gemini AI
     """)
 
@@ -258,8 +258,9 @@ with tab1:
                 st.error(f"❌ 代號錯誤：找不到以下標的 **{invalid_tickers}** 的資料！請確認代號是否輸入正確。")
                 st.stop()
 
-            raw_data = raw_data.dropna(how='all') 
-            returns = raw_data.pct_change().dropna(how='all')
+            # 【V3.2 修復】使用 ffill 延續前一天價格，解決台股美股休假日不同的問題
+            raw_data = raw_data.ffill().dropna(how='all') 
+            returns = raw_data.pct_change().fillna(0) # 休市日報酬率設為 0%
             
             if returns.empty:
                 st.error("❌ 錯誤：計算報酬率後無有效資料。這通常是因為你選擇的日期區間太短或遇到連續休市。")
@@ -278,7 +279,7 @@ with tab1:
             p_metrics = calculate_metrics(portfolio_ret, benchmark_ret)
             b_metrics = calculate_metrics(benchmark_ret, benchmark_ret) 
 
-            # --- 【V3.1 升級 1】顯示結果 UI (改為 % 顯示) ---
+            # --- 顯示結果 UI (改為 % 顯示) ---
             st.subheader("🏆 績效與防禦力總覽")
             
             st.markdown(f"**🆚 比較基準：** 以下數字下方的小字，皆為與 **{selected_bench_name}** 比較的差距。")
@@ -292,7 +293,6 @@ with tab1:
             
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # 將所有差異值格式化從 p.p. 改為 %
             c1, c2, c3 = st.columns(3)
             c1.metric("總報酬率", f"{p_metrics[0]:.2%}", f"{(p_metrics[0]-b_metrics[0])*100:.2f}%")
             c2.metric("年化報酬 (CAGR)", f"{p_metrics[1]:.2%}", f"{(p_metrics[1]-b_metrics[1])*100:.2f}%")
@@ -306,38 +306,35 @@ with tab1:
             c7.metric("🛡️ 下檔捕獲率", f"{p_metrics[6]:.2%}", f"{(p_metrics[6]-b_metrics[6])*100:.2f}%", delta_color="inverse")
             st.divider()
 
-            # --- 【V3.1 升級 2】滾動報酬與勝率分析 ---
+            # --- 滾動報酬與勝率分析 ---
             st.subheader("🔄 歷史勝率與滾動報酬 (1-Year Rolling Returns)")
-            st.info("**💡 為什麼我們需要看這個？** 只看「單一起點」會有運氣成分（例如剛好買在股災前或大牛市）。我們透過「滾動報酬」來測試：**假設你在過去任何一個交易日進場，持有一年後**的真實勝率與報酬分佈！這能最真實反映策略的穩定度。")
+            st.info("**💡 為什麼我們需要看這個？** 只看「單一起點」會有運氣成分。我們透過「滾動報酬」來測試：**假設你在過去任何一個交易日進場，持有一年後**的真實勝率與報酬分佈！這能最真實反映策略的穩定度。")
 
-            # 計算 252 天 (約一年) 的滾動報酬
             if len(p_metrics[7]) > 252:
-                # 滾動 1 年報酬率 = (今天的淨值 / 252天前的淨值) - 1
                 port_roll_1y = (p_metrics[7] / p_metrics[7].shift(252)) - 1
                 bench_roll_1y = (b_metrics[7] / b_metrics[7].shift(252)) - 1
                 
-                # 排除前 252 天的空值
-                port_roll_1y = port_roll_1y.dropna()
-                bench_roll_1y = bench_roll_1y.dropna()
+                # 【V3.2 修復】將兩者放入同一個 DataFrame 進行對齊與去空值，徹底解決 Series 長度不一致問題
+                roll_df = pd.DataFrame({'port': port_roll_1y, 'bench': bench_roll_1y}).dropna()
 
-                # 計算勝率
-                win_rate = (port_roll_1y > 0).mean() # 賺錢的機率
-                beat_market_rate = (port_roll_1y > bench_roll_1y).mean() # 贏大盤的機率
+                if not roll_df.empty:
+                    win_rate = (roll_df['port'] > 0).mean()
+                    beat_market_rate = (roll_df['port'] > roll_df['bench']).mean()
 
-                rc1, rc2, rc3 = st.columns(3)
-                rc1.metric("持有一年賺錢機率 (勝率)", f"{win_rate:.2%}")
-                rc2.metric("持有一年打敗大盤機率", f"{beat_market_rate:.2%}")
-                rc3.metric("一年期平均報酬率", f"{port_roll_1y.mean():.2%}")
+                    rc1, rc2, rc3 = st.columns(3)
+                    rc1.metric("持有一年賺錢機率 (勝率)", f"{win_rate:.2%}")
+                    rc2.metric("持有一年打敗大盤機率", f"{beat_market_rate:.2%}")
+                    rc3.metric("一年期平均報酬率", f"{roll_df['port'].mean():.2%}")
 
-                # 畫出滾動報酬折線圖
-                fig_roll = go.Figure()
-                fig_roll.add_trace(go.Scatter(x=port_roll_1y.index, y=port_roll_1y, mode='lines', name='我的組合 (1年期)', line=dict(color='purple'), hovertemplate='%{y:.2%}'))
-                fig_roll.add_trace(go.Scatter(x=bench_roll_1y.index, y=bench_roll_1y, mode='lines', name=f'{benchmark_ticker} (1年期)', line=dict(color='gray', dash='dot'), hovertemplate='%{y:.2%}'))
-                # 加上一條 0% 的基準水平線，方便看什麼時候虧錢
-                fig_roll.add_hline(y=0, line_dash="dash", line_color="red", annotation_text="0% (損益兩平線)", annotation_position="bottom right")
-                
-                fig_roll.update_layout(hovermode="x unified", yaxis_tickformat='.0%')
-                st.plotly_chart(fig_roll, use_container_width=True)
+                    fig_roll = go.Figure()
+                    fig_roll.add_trace(go.Scatter(x=roll_df.index, y=roll_df['port'], mode='lines', name='我的組合 (1年期)', line=dict(color='purple'), hovertemplate='%{y:.2%}'))
+                    fig_roll.add_trace(go.Scatter(x=roll_df.index, y=roll_df['bench'], mode='lines', name=f'{benchmark_ticker} (1年期)', line=dict(color='gray', dash='dot'), hovertemplate='%{y:.2%}'))
+                    fig_roll.add_hline(y=0, line_dash="dash", line_color="red", annotation_text="0% (損益兩平線)", annotation_position="bottom right")
+                    
+                    fig_roll.update_layout(hovermode="x unified", yaxis_tickformat='.0%')
+                    st.plotly_chart(fig_roll, use_container_width=True)
+                else:
+                    st.warning("⚠️ 對齊資料後無有效區間可供計算。")
             else:
                 st.warning("⚠️ 你的資料區間不足一年 (少於 252 個交易日)，無法計算滾動報酬。請將左側的「開始日期」往前調！")
             
