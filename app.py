@@ -41,7 +41,8 @@ def load_sp500_dashboard(period="1mo"): # 🎯 新增：讓函式可以接收 pe
         if ticker in close_prices.columns:
             stock_prices = close_prices[ticker].dropna()
             if len(stock_prices) > 0:
-                ret_period = float((stock_prices.iloc[-1] / stock_prices.iloc[0]) - 1)
+                # 🎯 關鍵修復：把算出來的小數點直接乘上 100，變成真正的百分比數值
+                ret_period = float((stock_prices.iloc[-1] / stock_prices.iloc[0]) - 1) * 100
                 trend = stock_prices.tolist() 
                 
                 results.append({
