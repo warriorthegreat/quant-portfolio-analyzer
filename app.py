@@ -3,20 +3,213 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import requests
 from datetime import datetime
+from event_study import EventStudyAnalyzer
+
+# ==========================================
+#  背景爬蟲：S&P 500 市場掃描儀快取函式 (動態期間版)
+# ==========================================
+@st.cache_data(ttl=3600) 
+def load_sp500_dashboard(period="1mo"): # 🎯 新增：讓函式可以接收 period 參數
+    url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    import requests
+    response = requests.get(url, headers=headers)
+    df_sp500 = pd.read_html(response.text)[0]
+    df_sp500['Symbol'] = df_sp500['Symbol'].str.replace('.', '-')
+    tickers = df_sp500['Symbol'].tolist()
+    
+    # 🎯 核心修改：把寫死的 "1mo" 變成變數 period
+    prices_raw = yf.download(tickers, period=period, auto_adjust=True, progress=False)
+    
+    if isinstance(prices_raw.columns, pd.MultiIndex) and 'Close' in prices_raw.columns.levels[0]:
+        close_prices = prices_raw['Close']
+    elif 'Close' in prices_raw.columns:
+        close_prices = prices_raw['Close']
+    else:
+        close_prices = prices_raw 
+        
+    actual_start = close_prices.index.min().strftime('%Y-%m-%d')
+    actual_end = close_prices.index.max().strftime('%Y-%m-%d')
+        
+    results = []
+    for idx, row in df_sp500.iterrows():
+        ticker = row['Symbol']
+        if ticker in close_prices.columns:
+            stock_prices = close_prices[ticker].dropna()
+            if len(stock_prices) > 0:
+                ret_period = float((stock_prices.iloc[-1] / stock_prices.iloc[0]) - 1)
+                trend = stock_prices.tolist() 
+                
+                results.append({
+                    '代號': ticker,
+                    '公司名稱': row['Security'],
+                    '產業板塊': row['GICS Sector'],
+                    '區間報酬率': ret_period, # 🎯 名稱改為動態的「區間」，不要寫死近一月
+                    '區間走勢': trend 
+                })
+                
+    return pd.DataFrame(results), actual_start, actual_end
 
 # --- 網頁設定 ---
 st.set_page_config(page_title="雙博士投資組合分析儀 V3.2", layout="wide")
 
 # --- 建立三分頁 (Tabs) ---
-# 建立四個主要分頁 (為了不影響你原本的變數，我們把新分頁叫 tab4 並安插在第三個位置)
-tab1, tab3, tab4, tab2 = st.tabs([
+# 建立五個主要分頁 
+tab1, tab5, tab3, tab4, tab2 = st.tabs([
     "📊 量化分析 (Analyzer)", 
+    "🦅 S&P 500 掃描儀",
     "⚔️ ETF 擂台 (Compare)", 
     "🌱 定期定額推演 (DCA)", 
     "ℹ️ 系統資訊 (About)"
 ])
+# ==========================================
+#  分頁 5：S&P 500 掃描儀 (Screener)
+# ==========================================
+with tab5:
+    st.title("🦅 S&P 500 市場掃描儀 (Screener)")
+    st.markdown("這裡顯示美國標普 500 指數成分股的近期動態。資料每小時自動更新一次。")
+    
+    # 🎯 新增：時間週期選擇器
+    PERIOD_OPTIONS = {
+        "近 1 個月 (短期動能)": "1mo",
+        "近 3 個月 (季報發酵)": "3mo",
+        "近 6 個月 (半年趨勢)": "6mo",
+        "今年以來 YTD (年度總結)": "ytd",
+        "近 1 年 (長期趨勢)": "1y"
+    }
+    
+    # ... 前面的時間選擇器 PERIOD_OPTIONS 保持不變 ...
+    p_col1, p_col2 = st.columns([1, 2])
+    with p_col1:
+        selected_period_label = st.selectbox("📅 選擇掃描時間週期：", list(PERIOD_OPTIONS.keys()))
+        selected_period_code = PERIOD_OPTIONS[selected_period_label]
 
+    # 🎯 關鍵修復 1：初始化記憶體開關
+    if "sp500_loaded" not in st.session_state:
+        st.session_state.sp500_loaded = False
+
+    # 🎯 關鍵修復 2：按鈕的功能只負責「打開開關」
+    if st.button(f"🔄 載入 {selected_period_label} 數據"):
+        st.session_state.sp500_loaded = True
+
+    
+   # 🎯 關鍵修復 3：只要開關是打開的，就永遠顯示底下的畫面
+    if st.session_state.sp500_loaded:
+        with st.spinner(f"🚀 正在批次下載 500 檔股票的 {selected_period_code} 資料，請稍候..."):
+            
+            df_dash, start_dt, end_dt = load_sp500_dashboard(period=selected_period_code)
+            
+            st.success("✅ 載入成功！")
+            st.info(f"📅 **本表數據擷取期間：** `{start_dt}` 至 `{end_dt}` (依美股實際交易日為準)")
+            
+            # ==========================================
+            # 區塊 1：大盤整體概況 (永遠顯示 S&P 500 全貌)
+            # ==========================================
+            up_count = (df_dash['區間報酬率'] > 0).sum()
+            down_count = len(df_dash) - up_count
+            
+            col_s1, col_s2, col_s3 = st.columns(3)
+            col_s1.metric("S&P 500 成分股總數", len(df_dash))
+            col_s2.metric("區間上漲家數", f"📈 {up_count} 家")
+            col_s3.metric("區間下跌家數", f"📉 {down_count} 家")
+            
+            st.divider()
+
+            # ==========================================
+            # 🎯 區塊 2：動態篩選器
+            # ==========================================
+            st.subheader("🎯 深入挖掘：板塊成分股篩選")
+            all_sectors = sorted(df_dash['產業板塊'].unique().tolist())
+            
+            selected_sectors = st.multiselect(
+                "請選擇你想查看的產業板塊（可複選），圖表與表格將自動聯動：", 
+                options=all_sectors, 
+                default=all_sectors
+            )
+            
+            # 根據選擇過濾出新的 DataFrame
+            filtered_df = df_dash[df_dash['產業板塊'].isin(selected_sectors)]
+
+            # ==========================================
+            # 🎯 區塊 3：篩選後的專屬統計數據 與 長條圖
+            # ==========================================
+            if not filtered_df.empty:
+                
+                # 1. 計算該篩選群體的漲跌家數
+                f_total = len(filtered_df)
+                f_up = (filtered_df['區間報酬率'] > 0).sum()
+                f_down = f_total - f_up
+                
+                # 2. 顯示專屬的數據卡片
+                fc1, fc2, fc3 = st.columns(3)
+                fc1.metric("篩選成分股總數", f_total)
+                fc2.metric("篩選上漲家數", f"📈 {f_up} 家")
+                fc3.metric("篩選下跌家數", f"📉 {f_down} 家")
+                
+                st.markdown("<br>", unsafe_allow_html=True) # 稍微空一行，讓畫面不擁擠
+
+                # 3. 準備畫圖資料
+                sector_summary = filtered_df.groupby('產業板塊').apply(
+                    lambda x: pd.Series({
+                        '上漲家數': (x['區間報酬率'] > 0).sum(),
+                        '下跌家數': (x['區間報酬率'] <= 0).sum()
+                    })
+                ).reset_index()
+                
+                sector_summary['總家數'] = sector_summary['上漲家數'] + sector_summary['下跌家數']
+                sector_summary = sector_summary.sort_values('總家數', ascending=True)
+
+                fig_sector = go.Figure()
+                fig_sector.add_trace(go.Bar(
+                    y=sector_summary['產業板塊'], x=sector_summary['下跌家數'],
+                    name='下跌家數', orientation='h', marker=dict(color='#ff4b4b') 
+                ))
+                fig_sector.add_trace(go.Bar(
+                    y=sector_summary['產業板塊'], x=sector_summary['上漲家數'],
+                    name='上漲家數', orientation='h', marker=dict(color='#00cc96') 
+                ))
+                
+                # 🎯 關鍵修改：動態調整高度與柱子粗細
+                # 如果只選 1 個板塊，高度就矮一點(才不會胖)；如果選 11 個，高度就拉高
+                dynamic_height = max(250, len(sector_summary) * 45) 
+                
+                fig_sector.update_layout(
+                    barmode='stack', 
+                    height=dynamic_height, 
+                    bargap=0.4, # 🎯 這裡設定 0.4 讓柱子之間的空白變大，柱子自然就會變「細」
+                    margin=dict(l=0, r=0, t=30, b=0),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                st.plotly_chart(fig_sector, use_container_width=True)
+            else:
+                st.warning("⚠️ 請至少選擇一個產業板塊來顯示圖表。")
+
+            st.divider()
+
+            # ==========================================
+            # 區塊 4：資料表
+            # ==========================================
+            # 因為上面已經有總數卡片了，這裡可以把原本的 st.caption 拿掉讓畫面更乾淨
+            st.dataframe(
+                filtered_df,
+                use_container_width=True,
+                height=600,
+                column_config={
+                    "代號": st.column_config.TextColumn("代號", width="small"),
+                    "公司名稱": st.column_config.TextColumn("公司名稱", width="medium"),
+                    "產業板塊": st.column_config.TextColumn("產業板塊", width="medium"),
+                    "區間報酬率": st.column_config.NumberColumn(
+                        "區間報酬率", format="%.2f%%"
+                    ),
+                    "區間走勢": st.column_config.LineChartColumn(
+                        "區間走勢 (Trend)", y_min=0, width="medium"
+                    )
+                }
+            )
 # ==========================================
 #  分頁 4 (UI 排序第 3)：定期定額複利推演 (DCA)
 # ==========================================
@@ -439,3 +632,77 @@ with tab1:
 
         except Exception as e:
             st.error(f"發生未預期錯誤：{str(e)}")
+    # --- tab1 的最底部 ---
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    st.divider()
+    
+    # 使用 Expander 把進階工具收起來，保持畫面簡潔
+    with st.expander("🚀 進階工具：單一標的事件分析 (Event Study)"):
+        st.markdown("""
+        **💡 這是什麼？** 當公司發生重大事件（如：增發新股、併購、財報公佈）時，這個工具能幫你扣除大盤波動，
+        計算出該標的的 **累積異常報酬 (CAR)**。這能幫你判斷利空是否已經出盡。
+        """)
+        
+        # 定義更豐富的大盤選項清單
+        ES_BENCHMARKS = {
+            "🇺🇸 S&P 500 (SPY)": "SPY",
+            "🇺🇸 Nasdaq 科技股 (QQQ)": "QQQ",
+            "🇺🇸 羅素 2000 小型股 (IWM)": "IWM",
+            "🇹🇼 台灣 50 (0050.TW)": "0050.TW",
+            "🇹🇼 加權指數 (^TWII)": "^TWII",
+            "✏️ 自訂輸入 (Custom)": "CUSTOM"
+        }
+
+        # 建立輸入介面
+        e_col1, e_col2, e_col3 = st.columns([2, 2, 2])
+        with e_col1:
+            e_ticker = st.text_input("輸入事件標的", value="KTOS", key="es_ticker").upper().strip()
+        with e_col2:
+            e_date = st.date_input("事件發生日期", value=datetime.now(), key="es_date")
+        with e_col3:
+            e_bench_display = st.selectbox("對比基準 (Benchmark)", list(ES_BENCHMARKS.keys()), key="es_bench_display")
+            
+            # 如果選擇自訂，就在下方多跳出一個輸入框
+            if ES_BENCHMARKS[e_bench_display] == "CUSTOM":
+                e_bench = st.text_input("請輸入自訂代號 (如 ITA, SMH)", value="SPY", key="es_custom").upper().strip()
+            else:
+                e_bench = ES_BENCHMARKS[e_bench_display]
+
+        if st.button("🔍 執行事件追蹤分析"):
+            
+            # 🚨 想法三：防呆機制！如果標的或大盤是空的，直接報錯並終止
+            if not e_ticker or not e_bench:
+                st.error("⚠️ 錯誤：請務必填寫「事件標的」與「對比基準」！缺少大盤數據無法進行回歸計算。")
+                st.stop() # 強制停止，後面的程式都不會跑
+
+            # 1. 聘請小秘書 (實例化 Class)
+            analyzer = EventStudyAnalyzer(e_ticker, benchmark=e_bench)
+            
+            try:
+                with st.spinner(f"正在分析 {e_ticker} 扣除 {e_bench} 波動後的異常報酬..."):
+                    # 2. 叫小秘書去抓資料
+                    analyzer.fetch_data(e_date)
+                    
+                    # 3. 執行數學回歸計算
+                    results, beta = analyzer.run_analysis(e_date)
+                    final_car = results['CAR'].iloc[-1] * 100
+                    
+                    # 4. 顯示結果 (改成漂亮的 Metric UI)
+                    st.success("✅ 分析完成！")
+                    
+                    sc1, sc2 = st.columns(2)
+                    sc1.metric(f"對標 {e_bench} 的 Beta 值", f"{beta:.2f}", 
+                               delta="> 1 代表波動較大" if beta > 1 else "< 1 代表波動較小", delta_color="off")
+                    sc2.metric("事件後累積異常報酬 (CAR)", f"{final_car:.2f}%", 
+                               delta="表現優於預期" if final_car > 0 else "表現低於預期", 
+                               delta_color="normal" if final_car > 0 else "inverse")
+                    
+                    # 5. 畫出 CAR 曲線圖
+                    fig_car = analyzer.plot_car(results)
+                    st.plotly_chart(fig_car, use_container_width=True)
+                    
+                    st.info("📌 **如何解讀：** 如果 CAR 曲線在事件後持續走低，代表市場認為此利空尚未出盡；若曲線開始走平或反彈，則可能是分批進場的時機。")
+            except Exception as e:
+                st.error(f"❌ 分析失敗，可能是代號錯誤或該期間無資料。錯誤訊息: {e}")
+
+    
