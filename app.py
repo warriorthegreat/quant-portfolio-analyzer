@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import requests
 from datetime import datetime
 from event_study import EventStudyAnalyzer
+from market_screener import render_market_dashboard
 
 # ==========================================
 #  背景爬蟲：S&P 500 市場掃描儀快取函式 (動態期間版)
@@ -58,159 +59,37 @@ def load_sp500_dashboard(period="1mo"): # 🎯 新增：讓函式可以接收 pe
 # --- 網頁設定 ---
 st.set_page_config(page_title="雙博士投資組合分析儀 V3.2", layout="wide")
 
-# --- 建立三分頁 (Tabs) ---
-# 建立五個主要分頁 
-tab1, tab5, tab3, tab4, tab2 = st.tabs([
-    "📊 量化分析 (Analyzer)", 
-    "🦅 S&P 500 掃描儀",
-    "⚔️ ETF 擂台 (Compare)", 
-    "🌱 定期定額推演 (DCA)", 
-    "ℹ️ 系統資訊 (About)"
+# 建立六個主要分頁 
+# 🎯 關鍵修復：左邊加上 tab6，右邊加上 "🇹🇼 台股掃描"
+tab1, tab5, tab6, tab3, tab4, tab2 = st.tabs([
+    "📊 量化分析", 
+    "🦅 美股掃描",
+    "🇹🇼 台股掃描",
+    "⚔️ ETF 擂台", 
+    "🌱 定期定額", 
+    "ℹ️ 系統資訊"
 ])
 # ==========================================
-#  分頁 5：S&P 500 掃描儀 (Screener)
+#  分頁 5：🦅 S&P 500 市場掃描儀
 # ==========================================
 with tab5:
-    st.title("🦅 S&P 500 市場掃描儀 (Screener)")
-    st.markdown("這裡顯示美國標普 500 指數成分股的近期動態。資料每小時自動更新一次。")
-    
-    # 🎯 新增：時間週期選擇器
-    PERIOD_OPTIONS = {
-        "近 1 個月 (短期動能)": "1mo",
-        "近 3 個月 (季報發酵)": "3mo",
-        "近 6 個月 (半年趨勢)": "6mo",
-        "今年以來 YTD (年度總結)": "ytd",
-        "近 1 年 (長期趨勢)": "1y"
-    }
-    
-    # ... 前面的時間選擇器 PERIOD_OPTIONS 保持不變 ...
-    p_col1, p_col2 = st.columns([1, 2])
-    with p_col1:
-        selected_period_label = st.selectbox("📅 選擇掃描時間週期：", list(PERIOD_OPTIONS.keys()))
-        selected_period_code = PERIOD_OPTIONS[selected_period_label]
+    render_market_dashboard(
+        title="🦅 S&P 500 市場掃描儀 (Screener)",
+        description="追蹤美國標普 500 指數成分股近期動態，資金流向與類股輪動分析。",
+        market_type="sp500"
+    )
 
-    # 🎯 關鍵修復 1：初始化記憶體開關
-    if "sp500_loaded" not in st.session_state:
-        st.session_state.sp500_loaded = False
+# ==========================================
+#  分頁 6：🇹🇼 台灣 50 市場掃描儀
+# ==========================================
+with tab6:
+    render_market_dashboard(
+        title="🇹🇼 台灣 50 市場掃描儀 (Taiwan 50 Screener)",
+        description="即時追蹤台灣市值前 50 大權值股動態，結合 TWSE 官方產業分類與最新成分名單。",
+        market_type="tw50"
+    )
 
-    # 🎯 關鍵修復 2：按鈕的功能只負責「打開開關」
-    if st.button(f"🔄 載入 {selected_period_label} 數據"):
-        st.session_state.sp500_loaded = True
 
-    
-   # 🎯 關鍵修復 3：只要開關是打開的，就永遠顯示底下的畫面
-    if st.session_state.sp500_loaded:
-        with st.spinner(f"🚀 正在批次下載 500 檔股票的 {selected_period_code} 資料，請稍候..."):
-            
-            df_dash, start_dt, end_dt = load_sp500_dashboard(period=selected_period_code)
-            
-            st.success("✅ 載入成功！")
-            st.info(f"📅 **本表數據擷取期間：** `{start_dt}` 至 `{end_dt}` (依美股實際交易日為準)")
-            
-            # ==========================================
-            # 區塊 1：大盤整體概況 (永遠顯示 S&P 500 全貌)
-            # ==========================================
-            up_count = (df_dash['區間報酬率'] > 0).sum()
-            down_count = len(df_dash) - up_count
-            
-            col_s1, col_s2, col_s3 = st.columns(3)
-            col_s1.metric("S&P 500 成分股總數", len(df_dash))
-            col_s2.metric("區間上漲家數", f"📈 {up_count} 家")
-            col_s3.metric("區間下跌家數", f"📉 {down_count} 家")
-            
-            st.divider()
-
-            # ==========================================
-            # 🎯 區塊 2：動態篩選器
-            # ==========================================
-            st.subheader("🎯 深入挖掘：板塊成分股篩選")
-            all_sectors = sorted(df_dash['產業板塊'].unique().tolist())
-            
-            selected_sectors = st.multiselect(
-                "請選擇你想查看的產業板塊（可複選），圖表與表格將自動聯動：", 
-                options=all_sectors, 
-                default=all_sectors
-            )
-            
-            # 根據選擇過濾出新的 DataFrame
-            filtered_df = df_dash[df_dash['產業板塊'].isin(selected_sectors)]
-
-            # ==========================================
-            # 🎯 區塊 3：篩選後的專屬統計數據 與 長條圖
-            # ==========================================
-            if not filtered_df.empty:
-                
-                # 1. 計算該篩選群體的漲跌家數
-                f_total = len(filtered_df)
-                f_up = (filtered_df['區間報酬率'] > 0).sum()
-                f_down = f_total - f_up
-                
-                # 2. 顯示專屬的數據卡片
-                fc1, fc2, fc3 = st.columns(3)
-                fc1.metric("篩選成分股總數", f_total)
-                fc2.metric("篩選上漲家數", f"📈 {f_up} 家")
-                fc3.metric("篩選下跌家數", f"📉 {f_down} 家")
-                
-                st.markdown("<br>", unsafe_allow_html=True) # 稍微空一行，讓畫面不擁擠
-
-                # 3. 準備畫圖資料
-                sector_summary = filtered_df.groupby('產業板塊').apply(
-                    lambda x: pd.Series({
-                        '上漲家數': (x['區間報酬率'] > 0).sum(),
-                        '下跌家數': (x['區間報酬率'] <= 0).sum()
-                    })
-                ).reset_index()
-                
-                sector_summary['總家數'] = sector_summary['上漲家數'] + sector_summary['下跌家數']
-                sector_summary = sector_summary.sort_values('總家數', ascending=True)
-
-                fig_sector = go.Figure()
-                fig_sector.add_trace(go.Bar(
-                    y=sector_summary['產業板塊'], x=sector_summary['下跌家數'],
-                    name='下跌家數', orientation='h', marker=dict(color='#ff4b4b') 
-                ))
-                fig_sector.add_trace(go.Bar(
-                    y=sector_summary['產業板塊'], x=sector_summary['上漲家數'],
-                    name='上漲家數', orientation='h', marker=dict(color='#00cc96') 
-                ))
-                
-                # 🎯 關鍵修改：動態調整高度與柱子粗細
-                # 如果只選 1 個板塊，高度就矮一點(才不會胖)；如果選 11 個，高度就拉高
-                dynamic_height = max(250, len(sector_summary) * 45) 
-                
-                fig_sector.update_layout(
-                    barmode='stack', 
-                    height=dynamic_height, 
-                    bargap=0.4, # 🎯 這裡設定 0.4 讓柱子之間的空白變大，柱子自然就會變「細」
-                    margin=dict(l=0, r=0, t=30, b=0),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                )
-                st.plotly_chart(fig_sector, use_container_width=True)
-            else:
-                st.warning("⚠️ 請至少選擇一個產業板塊來顯示圖表。")
-
-            st.divider()
-
-            # ==========================================
-            # 區塊 4：資料表
-            # ==========================================
-            # 因為上面已經有總數卡片了，這裡可以把原本的 st.caption 拿掉讓畫面更乾淨
-            st.dataframe(
-                filtered_df,
-                use_container_width=True,
-                height=600,
-                column_config={
-                    "代號": st.column_config.TextColumn("代號", width="small"),
-                    "公司名稱": st.column_config.TextColumn("公司名稱", width="medium"),
-                    "產業板塊": st.column_config.TextColumn("產業板塊", width="medium"),
-                    "區間報酬率": st.column_config.NumberColumn(
-                        "區間報酬率", format="%.2f%%"
-                    ),
-                    "區間走勢": st.column_config.LineChartColumn(
-                        "區間走勢 (Trend)", y_min=0, width="medium"
-                    )
-                }
-            )
 # ==========================================
 #  分頁 4 (UI 排序第 3)：定期定額複利推演 (DCA)
 # ==========================================
