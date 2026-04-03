@@ -138,10 +138,23 @@ def load_sp500_dashboard(period="1mo"):
 #  模組 2：🇹🇼 台股 50 核心邏輯
 # ==========================================
 @st.cache_data(ttl=86400)
+# ==========================================
+#  模組 2：🇹🇼 台股 50 核心邏輯
+# ==========================================
+@st.cache_data(ttl=86400)
 def get_twse_official_info():
     url = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+    
+    # 🎯 關鍵修復：補上 User-Agent 偽裝成正常瀏覽器，避免被證交所阻擋
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
+    }
+    
     try:
-        res = requests.get(url, timeout=10)
+        # 加入 headers 參數
+        res = requests.get(url, headers=headers, timeout=10)
+        res.raise_for_status() # 確保連線成功 (HTTP 200)，否則拋出例外
+        
         data = res.json()
         twse_dict = {}
         for company in data:
@@ -149,13 +162,21 @@ def get_twse_official_info():
             name = company.get("公司簡稱", "未知名稱")
             sector_raw = company.get("產業別", "其他")
             
-            # 台股產業中文翻譯 (若 API 給代碼如 "24"，會轉成 "半導體業"；若給字串則不變)
+            # 台股產業中文翻譯
             sector = TWSE_SECTOR_MAP.get(sector_raw, sector_raw)
             
             if ticker:
                 twse_dict[ticker] = {"name": name, "sector": sector}
+                
+        # 雙重防呆：如果抓下來卻是空的
+        if not twse_dict:
+            st.warning("⚠️ 證交所 API 回傳空資料，請確認連線狀態。")
+            
         return twse_dict
+        
     except Exception as e:
+        # 如果出錯，在畫面上顯示紅字，不再默默吞掉錯誤
+        st.error(f"⚠️ 無法取得證交所產業分類，目前使用預設值。錯誤細節：{e}")
         return {}
 
 @st.cache_data(ttl=86400)
