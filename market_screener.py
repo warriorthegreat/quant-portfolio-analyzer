@@ -3,6 +3,12 @@ import yfinance as yf
 import pandas as pd
 import requests
 import plotly.graph_objects as go
+import urllib3 # 👈 新增這行
+
+# 👈 新增這行，用來隱藏 SSL 憑證驗證被關閉時的警告訊息
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning) 
+
+import plotly.graph_objects as go
 
 # ==========================================
 #  共用設定與常數 (字典與對照表)
@@ -134,10 +140,7 @@ def load_sp500_dashboard(period="1mo"):
                 })
     return pd.DataFrame(results), actual_start, actual_end
 
-# ==========================================
-#  模組 2：🇹🇼 台股 50 核心邏輯
-# ==========================================
-@st.cache_data(ttl=86400)
+
 # ==========================================
 #  模組 2：🇹🇼 台股 50 核心邏輯
 # ==========================================
@@ -145,15 +148,14 @@ def load_sp500_dashboard(period="1mo"):
 def get_twse_official_info():
     url = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
     
-    # 🎯 關鍵修復：補上 User-Agent 偽裝成正常瀏覽器，避免被證交所阻擋
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
     }
     
     try:
-        # 加入 headers 參數
-        res = requests.get(url, headers=headers, timeout=10)
-        res.raise_for_status() # 確保連線成功 (HTTP 200)，否則拋出例外
+        # 🎯 關鍵修復：加入 verify=False 強制忽略 SSL 憑證錯誤
+        res = requests.get(url, headers=headers, timeout=10, verify=False)
+        res.raise_for_status() 
         
         data = res.json()
         twse_dict = {}
@@ -162,20 +164,17 @@ def get_twse_official_info():
             name = company.get("公司簡稱", "未知名稱")
             sector_raw = company.get("產業別", "其他")
             
-            # 台股產業中文翻譯
             sector = TWSE_SECTOR_MAP.get(sector_raw, sector_raw)
             
             if ticker:
                 twse_dict[ticker] = {"name": name, "sector": sector}
                 
-        # 雙重防呆：如果抓下來卻是空的
         if not twse_dict:
             st.warning("⚠️ 證交所 API 回傳空資料，請確認連線狀態。")
             
         return twse_dict
         
     except Exception as e:
-        # 如果出錯，在畫面上顯示紅字，不再默默吞掉錯誤
         st.error(f"⚠️ 無法取得證交所產業分類，目前使用預設值。錯誤細節：{e}")
         return {}
 
