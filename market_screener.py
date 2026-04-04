@@ -94,16 +94,34 @@ def get_trend_data(prices, period_code):
 # ==========================================
 @st.cache_data(ttl=3600)
 def load_sp500_dashboard(period="1mo"):
+    import io  # 👈 新增引入 io 模組
+    
     url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    response = requests.get(url, headers=headers)
-    df_sp500 = pd.read_html(response.text)[0]
+    
+    # 🎯 關鍵修復 1：換成完整的瀏覽器 User-Agent，避免被維基百科當成惡意爬蟲
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status() # 如果被阻擋，會在這裡報 HTTP 錯誤，保護後面的 Pandas
+        
+        # 🎯 關鍵修復 2：使用 io.StringIO 包裝字串。這是 Pandas 2.0 版之後的標準防呆寫法
+        # 它可以確保 Pandas 乖乖把內容當作文字解析，絕對不會再去誤認成檔案名稱！
+        df_sp500 = pd.read_html(io.StringIO(response.text))[0]
+        
+    except Exception as e:
+        st.error(f"⚠️ 無法取得 S&P 500 官方名單，維基百科連線失敗。錯誤細節：{e}")
+        return pd.DataFrame(), "N/A", "N/A"
+        
     df_sp500['Symbol'] = df_sp500['Symbol'].str.replace('.', '-')
     tickers = df_sp500['Symbol'].tolist()
     
-    # 🎯 關鍵改動：不管使用者選什麼，底層一律先抓 1 年資料，用來算多個時間窗
+    # 底層一律先抓 1 年資料，用來算多個時間窗
     prices_raw = yf.download(tickers, period="1y", auto_adjust=True, progress=False, threads=True)
     
+    # 處理 yfinance 多重索引
     if isinstance(prices_raw.columns, pd.MultiIndex) and 'Close' in prices_raw.columns.levels[0]:
         close_prices = prices_raw['Close']
     elif 'Close' in prices_raw.columns:
@@ -112,8 +130,10 @@ def load_sp500_dashboard(period="1mo"):
         close_prices = prices_raw 
         
     close_prices = close_prices.ffill().dropna(how='all')
-    actual_start = close_prices.index.min().strftime('%Y-%m-%d')
-    actual_end = close_prices.index.max().strftime('%Y-%m-%d')
+    
+    # 增加空值防呆
+    actual_start = close_prices.index.min().strftime('%Y-%m-%d') if not close_prices.empty else "N/A"
+    actual_end = close_prices.index.max().strftime('%Y-%m-%d') if not close_prices.empty else "N/A"
         
     results = []
     for idx, row in df_sp500.iterrows():
@@ -138,6 +158,7 @@ def load_sp500_dashboard(period="1mo"):
                     '6M 報酬': returns['6mo'],
                     '區間走勢': trend 
                 })
+                
     return pd.DataFrame(results), actual_start, actual_end
 
 
